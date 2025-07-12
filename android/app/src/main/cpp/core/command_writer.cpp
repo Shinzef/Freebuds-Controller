@@ -217,11 +217,37 @@ bool CommandWriter::create_or_update_custom_equalizer(const CustomEqPreset& pres
     return true;
 }
 
-bool CommandWriter::delete_custom_equalizer(uint8_t preset_id) {
+//bool CommandWriter::delete_custom_equalizer(uint8_t preset_id) {
+//    auto request = HuaweiSppPacket(bytes_to_u16(HuaweiCommands::CMD_EQUALIZER_WRITE[0], HuaweiCommands::CMD_EQUALIZER_WRITE[1]));
+// request.parameters[1] = { preset_id };
+// request.parameters[5] = { 2 };
+//   send_and_log(request, "Delete Custom Equalizer");
+//
+//    std::cerr << "Deprecated delete_custom_equalizer(id) called. No action taken." << std::endl;
+//    return false;
+//}
+
+bool CommandWriter::delete_custom_equalizer(const CustomEqPreset& preset) {
+    if (preset.values.size() != 10) {
+        std::cerr << "Cannot delete EQ preset with invalid values." << std::endl;
+        return false;
+    }
+    std::vector<uint8_t> values_as_uint;
+    values_as_uint.reserve(preset.values.size());
+    for(int8_t val : preset.values) {
+        values_as_uint.push_back(static_cast<uint8_t>(val));
+    }
+
     auto request = HuaweiSppPacket(bytes_to_u16(HuaweiCommands::CMD_EQUALIZER_WRITE[0], HuaweiCommands::CMD_EQUALIZER_WRITE[1]));
-    request.parameters[1] = { preset_id };
+    request.parameters[1] = { preset.id };
+    request.parameters[2] = { static_cast<uint8_t>(values_as_uint.size()) };
+    request.parameters[3] = values_as_uint;
+    request.parameters[4] = std::vector<uint8_t>(preset.name.begin(), preset.name.end());
+
+    // The ONLY difference from create_or_update is this action code: '2' means DELETE.
     request.parameters[5] = { 2 };
-    send_and_log(request, "Delete Custom Equalizer");
+
+    send_and_log(request, "Delete Custom Equalizer (Correct Payload)");
     return true;
 }
 

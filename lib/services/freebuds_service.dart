@@ -148,7 +148,15 @@ class FreeBudsService {
     }) ?? false;
   }
 
-  static Future<bool> deleteCustomEq(int presetId) async {
-    return await _channel.invokeMethod('deleteCustomEq', {'presetId': presetId}) ?? false;
+
+  static Future<bool> deleteCustomEq(Map<dynamic, dynamic> preset) async {
+    // The C++ layer needs the original -60 to 60 values, not our UI's -6 to 6 range.
+    final valuesToSend = List<int>.from(preset['values']);
+    final presetToSend = {
+      'id': preset['id'],
+      'name': preset['name'],
+      'values': valuesToSend
+    };
+    return await _channel.invokeMethod('deleteCustomEq', {'preset': presetToSend}) ?? false;
   }
 }

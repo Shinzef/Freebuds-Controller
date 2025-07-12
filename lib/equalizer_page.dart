@@ -2,7 +2,7 @@
 
 import 'package:flutter/material.dart';
 import 'services/freebuds_service.dart';
-import 'dart:math';
+import 'eq_editor_page.dart'; // <-- IMPORT OUR NEW EDITOR PAGE
 
 class EqualizerPage extends StatefulWidget {
   const EqualizerPage({super.key});
@@ -51,78 +51,38 @@ class _EqualizerPageState extends State<EqualizerPage> {
     await FreeBudsService.setEqualizerPreset(newId);
   }
 
-  Future<void> _showDeleteConfirmationDialog(int id, String name) async {
-    showDialog(
+  Future<void> _showDeleteConfirmationDialog(Map<dynamic, dynamic> preset) async {
+    final String name = preset['name'];
+    final bool? shouldDelete = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Delete Preset'),
         content: Text("Are you sure you want to delete the '$name' preset?"),
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
           TextButton(
-            onPressed: () async {
-              Navigator.of(context).pop();
-              await FreeBudsService.deleteCustomEq(id);
-              await _loadEqInfo(showLoader: false);
-            },
-            child: Text('Delete', style: TextStyle(color: Colors.red.shade400)),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text('Delete', style: TextStyle(color: Theme.of(context).colorScheme.error)),
           ),
         ],
       ),
     );
+
+    if (shouldDelete == true) {
+      await FreeBudsService.deleteCustomEq(preset);
+      await _loadEqInfo(showLoader: false);
+    }
   }
 
-  Future<void> _showEqEditDialog({Map<dynamic, dynamic>? preset}) async {
-    final bool isCreating = preset == null;
-    final id = isCreating ? Random().nextInt(100) + 10 : preset!['id']; // Simple ID generation
-    final nameController = TextEditingController(text: isCreating ? '' : preset!['name']);
-    final values = isCreating ? List.filled(10, 0) : List<int>.from(preset!['values']);
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(isCreating ? 'Create Custom Preset' : 'Edit Preset'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(controller: nameController, decoration: const InputDecoration(labelText: 'Preset Name')),
-              const SizedBox(height: 20),
-              ...List.generate(10, (index) {
-                return StatefulBuilder(
-                    builder: (context, setSliderState) {
-                      return Row(
-                        children: [
-                          Text('${(values[index] / 10).toStringAsFixed(1)} dB', style: const TextStyle(fontSize: 12)),
-                          Expanded(
-                            child: Slider(
-                              min: -60, max: 60, divisions: 24,
-                              value: values[index].toDouble(),
-                              onChanged: (newValue) => setSliderState(() => values[index] = newValue.round()),
-                            ),
-                          ),
-                        ],
-                      );
-                    }
-                );
-              }),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
-          TextButton(
-            onPressed: () async {
-              if (nameController.text.isEmpty) return;
-              Navigator.of(context).pop();
-              await FreeBudsService.createOrUpdateCustomEq(id, nameController.text, values);
-              await _loadEqInfo(showLoader: false);
-            },
-            child: const Text('Save'),
-          ),
-        ],
-      ),
+  // --- THIS IS THE NEW NAVIGATION LOGIC ---
+  Future<void> _navigateToEditor({Map<dynamic, dynamic>? preset}) async {
+    final result = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (context) => EqEditorPage(initialPreset: preset)),
     );
+    // If the editor page popped with `true`, it means we saved, so we should refresh.
+    if (result == true) {
+      _loadEqInfo(showLoader: false);
+    }
   }
 
   @override
@@ -135,7 +95,7 @@ class _EqualizerPageState extends State<EqualizerPage> {
           ? Center(child: Text('Failed to load settings.'))
           : RefreshIndicator(onRefresh: () => _loadEqInfo(), child: _buildPresetList()),
       floatingActionButton: FloatingActionButton(
-        onPressed: _showEqEditDialog,
+        onPressed: () => _navigateToEditor(), // Navigate to create a new preset
         child: const Icon(Icons.add),
         tooltip: 'Create Custom Preset',
       ),
@@ -148,9 +108,10 @@ class _EqualizerPageState extends State<EqualizerPage> {
     final customPresets = List<Map<dynamic, dynamic>>.from(_eqInfo!['custom_presets'] ?? []);
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(8, 8, 8, 80), // Padding for FAB
+      padding: const EdgeInsets.fromLTRB(8, 8, 8, 80),
       children: [
         Card(
+          clipBehavior: Clip.antiAlias,
           child: Padding(
             padding: const EdgeInsets.all(16.0),
             child: Column(
@@ -160,7 +121,6 @@ class _EqualizerPageState extends State<EqualizerPage> {
                 const SizedBox(height: 8),
                 Wrap(
                   spacing: 8.0,
-                  runSpacing: 4.0,
                   children: builtInIds.map((id) => ChoiceChip(
                     label: Text(_presetNames[id] ?? 'Preset $id'),
                     selected: currentPresetId == id,
@@ -171,38 +131,46 @@ class _EqualizerPageState extends State<EqualizerPage> {
             ),
           ),
         ),
-        if (customPresets.isNotEmpty)
-          Card(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-                  child: Text('Custom Presets', style: Theme.of(context).textTheme.titleLarge),
+        Card(
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                child: Text('Custom Presets', style: Theme.of(context).textTheme.titleLarge),
+              ),
+              if (customPresets.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 24.0),
+                  child: Center(child: Text('Press the + button to create a preset.')),
                 ),
-                ...customPresets.map((preset) {
-                  final int id = preset['id'];
-                  final String name = preset['name'];
-                  return ListTile(
-                    title: Text(name),
-                    leading: Radio<int>(
-                      value: id,
-                      groupValue: currentPresetId,
-                      onChanged: _onPresetChanged,
-                    ),
-                    trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        IconButton(icon: const Icon(Icons.edit_outlined), onPressed: () => _showEqEditDialog(preset: preset)),
-                        IconButton(icon: Icon(Icons.delete_outline, color: Colors.red.shade400), onPressed: () => _showDeleteConfirmationDialog(id, name)),
-                      ],
-                    ),
-                    onTap: () => _onPresetChanged(id),
-                  );
-                }),
-              ],
-            ),
+              ...customPresets.map((preset) {
+                final int id = preset['id'];
+                final String name = preset['name'];
+                return ListTile(
+                  title: Text(name),
+                  leading: Radio<int>(
+                    value: id,
+                    groupValue: currentPresetId,
+                    onChanged: _onPresetChanged,
+                  ),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(icon: const Icon(Icons.edit_outlined), onPressed: () => _navigateToEditor(preset: preset)), // Navigate to edit
+                      IconButton(
+                          icon: Icon(Icons.delete_outline, color: Theme.of(context).colorScheme.error),
+                          onPressed: () => _showDeleteConfirmationDialog(preset) // <-- Pass the whole map here too
+                      ),
+                    ],
+                  ),
+                  onTap: () => _onPresetChanged(id),
+                );
+              }),
+            ],
           ),
+        ),
       ],
     );
   }

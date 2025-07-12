@@ -668,8 +668,26 @@ Java_com_example_freebuds_1flutter_MainActivity_nativeCreateOrUpdateCustomEquali
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
-        Java_com_example_freebuds_1flutter_MainActivity_nativeDeleteCustomEqualizer(JNIEnv *env, jobject thiz, jlong device_ptr, jint preset_id) {
-    if (device_ptr == 0 || !get_device(device_ptr)->is_connected()) return false;
-    LOGI("nativeDeleteCustomEqualizer called with id: %d", preset_id);
-    return get_device(device_ptr)->delete_custom_equalizer(static_cast<uint8_t>(preset_id));
+        Java_com_example_freebuds_1flutter_MainActivity_nativeDeleteCustomEqualizer(
+        JNIEnv *env, jobject thiz, jlong device_ptr, jint id, jstring name, jintArray values) {
+if (device_ptr == 0 || !get_device(device_ptr)->is_connected()) return false;
+
+// We must construct the full preset object to pass to the command writer.
+CustomEqPreset preset_to_delete;
+preset_to_delete.id = static_cast<uint8_t>(id);
+
+const char* name_chars = env->GetStringUTFChars(name, nullptr);
+preset_to_delete.name = std::string(name_chars);
+env->ReleaseStringUTFChars(name, name_chars);
+
+jsize len = env->GetArrayLength(values);
+if (len != 10) return false; // Safety check
+jint* value_elements = env->GetIntArrayElements(values, nullptr);
+for (int i = 0; i < len; ++i) {
+preset_to_delete.values.push_back(static_cast<int8_t>(value_elements[i]));
+}
+env->ReleaseIntArrayElements(values, value_elements, JNI_ABORT);
+
+LOGI("Calling delete_custom_equalizer with full payload for id: %d", id);
+return get_device(device_ptr)->delete_custom_equalizer(preset_to_delete);
 }

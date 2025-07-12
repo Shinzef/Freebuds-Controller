@@ -273,6 +273,8 @@ Future<void> _updateAncStatusOnly() async {
     return Scaffold(
       appBar: AppBar(
         title: const Text('FreeBuds Controller'),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
         actions: [
           if (_isConnected && !_isLoading)
             IconButton(

@@ -53,7 +53,7 @@ class MainActivity: FlutterActivity() {
     private external fun nativeGetEqualizerInfo(devicePtr: Long): Map<String, Any>?
     private external fun nativeSetEqualizerPreset(devicePtr: Long, presetId: Int): Boolean
     private external fun nativeCreateOrUpdateCustomEqualizer(devicePtr: Long, id: Int, name: String, values: IntArray): Boolean
-    private external fun nativeDeleteCustomEqualizer(devicePtr: Long, presetId: Int): Boolean
+    private external fun nativeDeleteCustomEqualizer(devicePtr: Long, id: Int, name: String, values: IntArray): Boolean
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -146,7 +146,17 @@ class MainActivity: FlutterActivity() {
                         setProperty(Triple(id, name, values), result) { args -> nativeCreateOrUpdateCustomEqualizer(devicePointer, args.first, args.second, args.third) }
                     }
                 }
-                "deleteCustomEq" -> setProperty(call.argument<Int>("presetId"), result) { arg -> nativeDeleteCustomEqualizer(devicePointer, arg) }
+                "deleteCustomEq" -> {
+                    val preset = call.argument<Map<String, Any>>("preset")
+                    if (preset == null) {
+                        result.error("INVALID_ARGS", "Missing preset map for deleting EQ.", null)
+                    } else {
+                        val id = preset["id"] as Int
+                        val name = preset["name"] as String
+                        val values = (preset["values"] as ArrayList<Int>).toIntArray()
+                        setProperty(Triple(id, name, values), result) { args -> nativeDeleteCustomEqualizer(devicePointer, args.first, args.second, args.third) }
+                    }
+                }
 
                 "scanForDevices" -> scanForDevices(result)
                 else -> result.notImplemented()

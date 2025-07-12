@@ -29,7 +29,7 @@ public:
     // --- Equalizer Methods ---
     bool set_equalizer_preset(uint8_t preset_id);
     bool create_or_update_custom_equalizer(const CustomEqPreset& preset);
-    bool delete_custom_equalizer(uint8_t preset_id);
+    bool delete_custom_equalizer(const CustomEqPreset& preset);
 
     // --- Dual-Connect Methods ---
     bool set_dual_connect_enabled(bool enable);

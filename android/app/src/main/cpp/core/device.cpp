@@ -89,7 +89,7 @@ bool Device::set_long_tap_anc_cycle(EarSide s, AncCycleMode m) { return m_writer
 bool Device::set_incall_double_tap_action(GestureAction a) { return m_writer ? m_writer->set_incall_double_tap_action(a) : false; }
 bool Device::set_equalizer_preset(uint8_t id) { return m_writer ? m_writer->set_equalizer_preset(id) : false; }
 bool Device::create_or_update_custom_equalizer(const CustomEqPreset& p) { return m_writer ? m_writer->create_or_update_custom_equalizer(p) : false; }
-bool Device::delete_custom_equalizer(uint8_t id) { return m_writer ? m_writer->delete_custom_equalizer(id) : false; }
+bool Device::delete_custom_equalizer(const CustomEqPreset& p) { return m_writer ? m_writer->delete_custom_equalizer(p) : false; }
 bool Device::create_fake_preset(FakePreset p, uint8_t id) { return m_writer ? m_writer->create_fake_preset(p, id) : false; }
 bool Device::set_dual_connect_enabled(bool e) { return m_writer ? m_writer->set_dual_connect_enabled(e) : false; }
 bool Device::set_dual_connect_preferred(const std::string& mac) { return m_writer ? m_writer->set_dual_connect_preferred(mac) : false; }
@@ -282,18 +282,32 @@ void Device::populate_equalizer_info(EqualizerInfo& info, const HuaweiSppPacket&
             preset.id = blob[pos];
             uint8_t num_values = blob[pos + 1];
 
+            // Ensure we don't read past the end of the blob
+            if (pos + 2 + num_values > blob.size()) break;
+
             size_t name_start = pos + 2 + num_values;
             if (name_start > blob.size()) break;
 
-            size_t name_end = std::find(blob.begin() + name_start, blob.end(), '\0') - blob.begin();
+            size_t name_end = name_start;
+            while(name_end < blob.size() && blob[name_end] != '\0') {
+                name_end++;
+            }
             preset.name = std::string(blob.begin() + name_start, blob.begin() + name_end);
 
             preset.values.reserve(num_values);
             for(size_t i = 0; i < num_values; ++i) {
                 preset.values.push_back(static_cast<int8_t>(blob[pos + 2 + i]));
             }
-            info.custom_presets.push_back(preset);
-            pos += 2 + num_values + preset.name.length() + 1;
+
+            // --- THE FIX IS HERE ---
+            // 1. The unconditional `push_back` has been DELETED.
+            // 2. We now ONLY add the preset if it passes the check.
+            if (!preset.name.empty() && preset.id != 0) {
+                info.custom_presets.push_back(preset);
+            }
+
+            // The +1 accounts for the null terminator of the name string
+            pos = name_end + 1;
         }
     }
 }
