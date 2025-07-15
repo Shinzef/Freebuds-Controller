@@ -1,51 +1,37 @@
-cmake_minimum_required(VERSION 3.22.1) # Use the version Android Studio provides
+# The minimum version of CMake required.
+cmake_minimum_required(VERSION 3.22.1)
+
+# Set the project name.
 project(OpenFreebudsCore CXX)
 
-# --- Define Common/Portable Source Files ---
-# These files are used on ALL platforms.
-set(COMMON_SOURCES
-        core/device.cpp
-        core/command_writer.cpp
-        protocol/crc16.cpp
-        protocol/huawei_packet.cpp
-)
+# Define a variable that points to our shared C++ source directory.
+# From android/app/src/main/cpp/ we need to go up 5 levels to reach the project root
+set(SHARED_CPP_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../../../cpp_core)
 
-# --- Define Platform-Specific Source Files ---
-if(WIN32 AND NOT ANDROID) # Building for Windows Desktop
-    message(STATUS "Configuring for Windows Desktop")
-    set(PLATFORM_SOURCES
-            platform/windows/bluetooth_spp_client.cpp
-            platform/windows/device_discovery.cpp
-    )
-elseif(ANDROID) # Building for Android
-    message(STATUS "Configuring for Android")
-    set(PLATFORM_SOURCES
-            platform/android/bluetooth_spp_client_android.cpp
-            jni_bridge.cpp # JNI is specific to our Android implementation
-    )
-else()
-    message(FATAL_ERROR "Unsupported platform!")
-endif()
+# Debug: Print the resolved path to verify it's correct
+message(STATUS "SHARED_CPP_DIR resolved to: ${SHARED_CPP_DIR}")
 
-# --- Create the Shared Library ---
-# We combine the common sources with the platform-specific sources.
+# We MUST define the library with add_library() FIRST.
 add_library(
         OpenFreebudsCore
         SHARED
-        ${COMMON_SOURCES}
-        ${PLATFORM_SOURCES}
+
+        # Android-specific bridge file
+        jni_bridge.cpp
+
+        # All the shared source files from our new location
+        ${SHARED_CPP_DIR}/core/device.cpp
+        ${SHARED_CPP_DIR}/core/command_writer.cpp
+        ${SHARED_CPP_DIR}/protocol/crc16.cpp
+        ${SHARED_CPP_DIR}/protocol/huawei_packet.cpp
+        ${SHARED_CPP_DIR}/platform/android/bluetooth_spp_client_android.cpp
 )
 
-# --- Set Include Directories ---
+# NOW that the "OpenFreebudsCore" target exists, we can modify it.
 target_include_directories(OpenFreebudsCore PUBLIC
-        . # The cpp directory is the root, so we can find core/, protocol/, etc.
+        ${SHARED_CPP_DIR}
 )
 
-# --- Link Platform-Specific Libraries ---
-if(WIN32 AND NOT ANDROID)
-    target_link_libraries(OpenFreebudsCore PRIVATE ws2_32 bthprops)
-elseif(ANDROID)
-    # Find and link the standard Android logging library
-    find_library(log-lib log)
-    target_link_libraries(OpenFreebudsCore PRIVATE ${log-lib})
-endif()
+# And now we can link libraries to it.
+find_library(log-lib log)
+target_link_libraries(OpenFreebudsCore PRIVATE ${log-lib})

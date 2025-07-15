@@ -54,6 +54,9 @@ class MainActivity: FlutterActivity() {
     private external fun nativeSetEqualizerPreset(devicePtr: Long, presetId: Int): Boolean
     private external fun nativeCreateOrUpdateCustomEqualizer(devicePtr: Long, id: Int, name: String, values: IntArray): Boolean
     private external fun nativeDeleteCustomEqualizer(devicePtr: Long, id: Int, name: String, values: IntArray): Boolean
+    private external fun nativeGetDualConnectDevices(devicePtr: Long): List<Map<String, Any>>?
+    private external fun nativeDualConnectAction(devicePtr: Long, macAddress: String, actionCode: Int): Boolean
+    private external fun createFakePreset(devicePtr: Long, presetType: Int, newId: Int): Boolean
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -156,6 +159,18 @@ class MainActivity: FlutterActivity() {
                         val values = (preset["values"] as ArrayList<Int>).toIntArray()
                         setProperty(Triple(id, name, values), result) { args -> nativeDeleteCustomEqualizer(devicePointer, args.first, args.second, args.third) }
                     }
+                }
+                "getDualConnectDevices" -> getProperty(result) { nativeGetDualConnectDevices(devicePointer) }
+                "dualConnectAction" -> {
+                    val mac = call.argument<String>("mac")
+                    val code = call.argument<Int>("code")
+                    setProperty(Pair(mac, code), result) { args -> nativeDualConnectAction(devicePointer, args.first!!, args.second!!) }
+                }
+
+                "createFakePreset" -> {
+                    val type = call.argument<Int>("presetType")
+                    val id = call.argument<Int>("newId")
+                    setProperty(Pair(type, id), result) { args -> createFakePreset(devicePointer, args.first!!, args.second!!) }
                 }
 
                 "scanForDevices" -> scanForDevices(result)

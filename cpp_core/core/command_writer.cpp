@@ -8,7 +8,6 @@
 // Helper Mappers (Enum to Integer)
 // =================================================================
 
-// Based on openfreebuds/driver/huawei/handler/abstract/multi_tap.py
 int gesture_action_to_int(GestureAction action) {
     switch (action) {
         case GestureAction::PLAY_PAUSE:     return 1;
@@ -23,7 +22,6 @@ int gesture_action_to_int(GestureAction action) {
     }
 }
 
-// Based on openfreebuds/driver/huawei/handler/action_long_tap_split.py
 int anc_cycle_to_int(AncCycleMode mode) {
     switch (mode) {
         case AncCycleMode::OFF_ON:              return 1;
@@ -49,10 +47,6 @@ std::pair<uint8_t, uint8_t> anc_level_to_int(AncLevel level) {
     }
 }
 
-// =================================================================
-// CommandWriter Implementation
-// =================================================================
-
 CommandWriter::CommandWriter(IBluetoothSPPClient& client) : m_client(client) {}
 
 void CommandWriter::send_and_log(const HuaweiSppPacket& request, const std::string& description) {
@@ -70,9 +64,6 @@ bool CommandWriter::set_anc_mode(AncMode mode) {
     if (mode == AncMode::UNKNOWN) return false;
     uint8_t mode_val = static_cast<uint8_t>(mode);
 
-    // --- FIX ---
-    // The payload must be in the format {level, mode}.
-    // For a mode change, the level is 0xFF, which means "don't change level."
     std::vector<uint8_t> payload = {mode_val, 0xFF};
 
     auto request = HuaweiSppPacket::create_write_request(HuaweiCommands::CMD_ANC_WRITE, 1, payload);
@@ -80,7 +71,6 @@ bool CommandWriter::set_anc_mode(AncMode mode) {
     return true;
 }
 
-// This method sets the specific level within a mode.
 // This method sets the specific level within a mode.
 bool CommandWriter::set_anc_level(AncLevel level) {
     if (level == AncLevel::UNKNOWN) return false;

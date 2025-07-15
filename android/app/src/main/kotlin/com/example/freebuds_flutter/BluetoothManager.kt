@@ -130,20 +130,56 @@ class BluetoothManager(private val context: Context) {
     }
 
     private fun startReceiver() {
+        if (receiverThread?.isAlive == true) {
+            return
+        }
         isRunning = true
         receiverThread = Thread {
-            val buffer = ByteArray(1024)
+            Log.d(TAG, "Receiver thread started")
+            val stream = inStream ?: return@Thread
+            val headerBuffer = ByteArray(4) // To read the fixed-size header: 5A len len 00
+
             while (isRunning && btSocket?.isConnected == true) {
                 try {
-                    val bytes = inStream?.read(buffer) ?: -1
-                    if (bytes > 0) {
-                        val receivedData = buffer.copyOf(bytes)
-                        incomingDataQueue.offer(receivedData)
-                        Log.d(TAG, "Received ${bytes} bytes")
+                    // --- STEP 1: Read the 4-byte header to get the packet length ---
+                    var bytesRead = 0
+                    while (bytesRead < headerBuffer.size && isRunning) {
+                        val read = stream.read(headerBuffer, bytesRead, headerBuffer.size - bytesRead)
+                        if (read == -1) throw IOException("Socket closed")
+                        bytesRead += read
                     }
+
+                    // --- STEP 2: Validate the header and calculate body length ---
+                    if (headerBuffer[0] != 0x5A.toByte() || headerBuffer[3] != 0x00.toByte()) {
+                        Log.e(TAG, "Invalid packet header received. Flushing input and retrying.")
+                        while (stream.available() > 0) stream.read() // Clear buffer
+                        continue
+                    }
+
+                    // The length in the header includes one of the length bytes itself.
+                    val bodyLengthWithHeader = (headerBuffer[1].toInt() and 0xFF shl 8) or (headerBuffer[2].toInt() and 0xFF)
+                    val remainingLength = (bodyLengthWithHeader - 1) + 2 // -1 for header part, +2 for CRC
+
+                    // --- STEP 3: Read the rest of the packet ---
+                    val fullPacket = ByteArray(headerBuffer.size + remainingLength)
+                    headerBuffer.copyInto(fullPacket, 0, 0, headerBuffer.size)
+
+                    bytesRead = 0
+                    while (bytesRead < remainingLength && isRunning) {
+                        val read = stream.read(fullPacket, headerBuffer.size + bytesRead, remainingLength - bytesRead)
+                        if (read == -1) throw IOException("Socket closed while reading body")
+                        bytesRead += read
+                    }
+
+                    // --- STEP 4: Queue the complete, reassembled packet ---
+                    incomingDataQueue.offer(fullPacket)
+                    Log.d(TAG, "Successfully received and queued a full packet of size ${fullPacket.size}")
+
                 } catch (e: IOException) {
                     if (isRunning) {
-                        Log.e(TAG, "Receiver thread error", e)
+                        Log.e(TAG, "Receiver thread error, disconnecting.", e)
+                        // In case of an error, it's safer to assume the connection is lost.
+                        disconnect()
                     }
                     break
                 }

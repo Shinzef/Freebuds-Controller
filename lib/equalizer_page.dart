@@ -15,6 +15,13 @@ class _EqualizerPageState extends State<EqualizerPage> {
   Map<String, dynamic>? _eqInfo;
   bool _isLoading = true;
 
+  static const int _symphonyId = 254;
+  static const int _hifiLiveId = 253;
+  static const Map<int, String> _fakePresetNames = {
+    _symphonyId: 'Symphony',
+    _hifiLiveId: 'Hi-Fi Live',
+  };
+
   final Map<int, String> _presetNames = {
     0: 'Default', 1: 'Bass Boost', 2: 'Treble Boost', 3: 'Voices',
   };
@@ -47,8 +54,26 @@ class _EqualizerPageState extends State<EqualizerPage> {
 
   Future<void> _onPresetChanged(int? newId) async {
     if (newId == null || !mounted) return;
+
+    // Before setting a new preset, check if a fake preset was active and delete it.
+    final customPresets = List<Map<dynamic, dynamic>>.from(_eqInfo!['custom_presets'] ?? []);
+    final activeSymphony = customPresets.any((p) => p['id'] == _symphonyId);
+    final activeHifi = customPresets.any((p) => p['id'] == _hifiLiveId);
+
+    if (activeSymphony) {
+      await FreeBudsService.deleteCustomEq(customPresets.firstWhere((p) => p['id'] == _symphonyId));
+    }
+    if (activeHifi) {
+      await FreeBudsService.deleteCustomEq(customPresets.firstWhere((p) => p['id'] == _hifiLiveId));
+    }
+
     setState(() => _eqInfo!['current_preset_id'] = newId);
     await FreeBudsService.setEqualizerPreset(newId);
+
+    // Do a quick refresh to ensure the UI is in sync after potential deletions
+    if (activeSymphony || activeHifi) {
+      await _loadEqInfo(showLoader: false);
+    }
   }
 
   Future<void> _showDeleteConfirmationDialog(Map<dynamic, dynamic> preset) async {
@@ -83,6 +108,36 @@ class _EqualizerPageState extends State<EqualizerPage> {
     if (result == true) {
       _loadEqInfo(showLoader: false);
     }
+  }
+
+  Future<void> _onFakePresetChanged(int fakeId) async {
+    if (!mounted) return;
+
+    final currentId = _eqInfo!['current_preset_id'];
+    // If we're already on this preset, do nothing.
+    if (currentId == fakeId) return;
+
+    setState(() {
+      _isLoading = true; // Show a loader for this multi-step process
+    });
+
+    // Check if the OTHER fake preset is active, and if so, delete it first.
+    final otherFakeId = (fakeId == _symphonyId) ? _hifiLiveId : _symphonyId;
+    final customPresets = List<Map<dynamic, dynamic>>.from(
+        _eqInfo!['custom_presets'] ?? []);
+    if (customPresets.any((p) => p['id'] == otherFakeId)) {
+      await FreeBudsService.deleteCustomEq(
+          customPresets.firstWhere((p) => p['id'] == otherFakeId));
+    }
+
+    final fakePresetType = (fakeId == _symphonyId) ? 0 : 1;
+    await FreeBudsService.createFakePreset(fakePresetType, fakeId);
+
+    // Finally, set the newly created preset as active.
+    await FreeBudsService.setEqualizerPreset(fakeId);
+
+    // Refresh the entire state from the device to ensure consistency.
+    await _loadEqInfo(showLoader: false);
   }
 
   @override
@@ -126,6 +181,16 @@ class _EqualizerPageState extends State<EqualizerPage> {
                     selected: currentPresetId == id,
                     onSelected: (_) => _onPresetChanged(id),
                   )).toList(),
+                ),
+                ChoiceChip(
+                  label: Text(_fakePresetNames[_symphonyId]!),
+                  selected: currentPresetId == _symphonyId,
+                  onSelected: (_) => _onFakePresetChanged(_symphonyId),
+                ),
+                ChoiceChip(
+                  label: Text(_fakePresetNames[_hifiLiveId]!),
+                  selected: currentPresetId == _hifiLiveId,
+                  onSelected: (_) => _onFakePresetChanged(_hifiLiveId),
                 ),
               ],
             ),

@@ -1,8 +1,17 @@
-import 'package:flutter/material.dart';
 import 'dart:async';
+import 'dart:io';
+import 'package:dynamic_color/dynamic_color.dart';
+import 'package:flutter/material.dart' hide BoxDecoration, BoxShadow;
+import 'package:flutter_inset_shadow/flutter_inset_shadow.dart';
+import 'dart:ui';
 import 'services/freebuds_service.dart'; // Import the service
 import 'gesture_settings_page.dart';
 import 'equalizer_page.dart';
+import 'dual_connect_page.dart';
+import 'package:flutter_acrylic/flutter_acrylic.dart' as flutter_acrylic;
+import 'package:bitsdojo_window/bitsdojo_window.dart';
+
+
 
 // Add a class for constants to avoid magic numbers in the code.
 class AncLevelConstants {
@@ -40,30 +49,83 @@ class GestureSettingsConstants {
     -1: 'Off',
   };
 
-   static const Map<int, String> swipeActions = {
+  static const Map<int, String> swipeActions = {
     8: 'Adjust Volume',
     -1: 'Off',
   };
 }
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  if (Platform.isWindows) {
+    doWhenWindowReady(() async {
+
+      const initialSize = Size(900, 600);
+      appWindow.minSize = Size(500, 400);
+      appWindow.size = initialSize;
+      appWindow.alignment = Alignment.center;
+      appWindow.title = "FreeBuds Controller";
+
+      await flutter_acrylic.Window.initialize();
+      await flutter_acrylic.Window.setEffect(
+        effect: flutter_acrylic.WindowEffect.mica,
+      );
+
+      flutter_acrylic.Window.hideWindowControls();
+      // this f thing made my life so f bad
+      // i debugged ts why the controls are duplicated, not knowing it comes with its own.
+      // worst part it doesnt even work. ( maybe thats my issue ).
+      // but i didnt f expect it, since i thought its only for f mica.
+
+      appWindow.show();
+
+    });
+
+
+  }
+
   runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
+  static final _defaultLightColorScheme = ColorScheme.fromSeed(
+    seedColor: Colors.green,
+    brightness: Brightness.light,
+    background: Colors.white,
+  );
+
+  static final _defaultDarkColorScheme = ColorScheme.fromSeed(
+    seedColor: Colors.green,
+    brightness: Brightness.dark,
+    background: Colors.black,
+  );
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      debugShowCheckedModeBanner: false,
       title: 'FreeBuds Controller',
       theme: ThemeData(
-        primarySwatch: Colors.blue,
-        visualDensity: VisualDensity.adaptivePlatformDensity,
+        colorScheme: _defaultLightColorScheme,
+        scaffoldBackgroundColor:
+        Platform.isWindows ? Colors.transparent : null,
         useMaterial3: true,
       ),
-      darkTheme: ThemeData.dark(useMaterial3: true),
-      home: const FreeBudsController(),
+      darkTheme: ThemeData(
+        colorScheme: _defaultDarkColorScheme,
+        scaffoldBackgroundColor:
+        Platform.isWindows ? Colors.transparent : null,
+        useMaterial3: true,
+      ),
+      // themeMode: ThemeMode.light,
+      home: WindowBorder(
+        color: Colors.transparent,
+        width: 0,
+        child: const FreeBudsController(),
+      ),
     );
   }
 }
@@ -79,7 +141,7 @@ class _FreeBudsControllerState extends State<FreeBudsController> {
   // State variables
   bool _isLoading = false;
   bool _isConnected = false;
-  String _deviceInfo = "Not connected";
+  Map<String, dynamic>? _deviceInfo; // Now it's a map
   Map<String, dynamic>? _batteryInfo;
   bool _isWearDetectionEnabled = false;
   bool _isLowLatencyEnabled = false;
@@ -111,39 +173,39 @@ class _FreeBudsControllerState extends State<FreeBudsController> {
   // --- Core Data Fetching Logic ---
 
   Future<void> _updateAllDeviceStatus() async {
-  if (!_isConnected || !mounted) return;
+    if (!_isConnected || !mounted) return;
 
-  // Only set loading for full updates
-  setState(() => _isLoading = true);
+    // Only set loading for full updates
+    setState(() => _isLoading = true);
 
-  try {
-    final results = await Future.wait([
-      FreeBudsService.getDeviceInfo(),
-      FreeBudsService.getBatteryInfo(),
-      FreeBudsService.getWearDetection(),
-      FreeBudsService.getLowLatency(),
-      FreeBudsService.getSoundQuality(),
-      FreeBudsService.getAncStatus(),
-    ]);
+    try {
+      final results = await Future.wait([
+        FreeBudsService.getDeviceInfo(),
+        FreeBudsService.getBatteryInfo(),
+        FreeBudsService.getWearDetection(),
+        FreeBudsService.getLowLatency(),
+        FreeBudsService.getSoundQuality(),
+        FreeBudsService.getAncStatus(),
+      ]);
 
-    if (!mounted) return;
-    setState(() {
-      _deviceInfo = results[0] as String? ?? "Unknown Device";
-      _batteryInfo = results[1] as Map<String, dynamic>?;
-      _isWearDetectionEnabled = results[2] as bool;
-      _isLowLatencyEnabled = results[3] as bool;
-      _soundQualityPreference = results[4] as int;
-      _ancStatus = results[5] as Map<String, dynamic>?;
-    });
-  } catch (e) {
-    print("Error updating all device status: $e");
-    _showErrorSnackBar('Error updating settings: $e');
-  } finally {
-    if (mounted) {
-      setState(() => _isLoading = false);
+      if (!mounted) return;
+      setState(() {
+        _deviceInfo = results[0] as Map<String, dynamic>?;
+        _batteryInfo = results[1] as Map<String, dynamic>?;
+        _isWearDetectionEnabled = results[2] as bool;
+        _isLowLatencyEnabled = results[3] as bool;
+        _soundQualityPreference = results[4] as int;
+        _ancStatus = results[5] as Map<String, dynamic>?;
+      });
+    } catch (e) {
+      print("Error updating all device status: $e");
+      _showErrorSnackBar('Error updating settings: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
-}
 
   void _showErrorSnackBar(String message) {
     if (!mounted) return;
@@ -170,18 +232,40 @@ class _FreeBudsControllerState extends State<FreeBudsController> {
   Future<void> _connect() async {
     setState(() => _isLoading = true);
     try {
-      final success = await FreeBudsService.connectDevice();
-      setState(() => _isConnected = success);
+      final success = await FreeBudsService.connectDevice("HUAWEI FreeBuds 6i");
+
       if (success) {
-        await Future.delayed(const Duration(milliseconds: 750));
+        print("✅ CONNECTION SUCCEEDED. The native part is done.");
+        setState(() {
+          _isConnected = true;
+          _isLoading = false; // Stop the loading indicator
+          _deviceInfo = null;
+        });
+
+        // // Now, let's wait a moment and then fetch the status separately.
+        // // This decouples the connection logic from the data fetching logic.
+        // await Future.delayed(const Duration(seconds: 2));
+        //
+        // print("▶️ Two seconds have passed. Now attempting to update status...");
         await _updateAllDeviceStatus();
+        // print("◀️ Status update finished.");
+
       } else {
-        setState(() => _isLoading = false);
-        _showErrorSnackBar('Failed to connect');
+        print("❌ CONNECTION FAILED. The native part returned false.");
+        setState(() {
+          _isConnected = false;
+          _isLoading = false;
+        });
+        _showErrorSnackBar('Failed to connect. Please check device pairing.');
       }
+      // --- END OF THE FIX ---
+
     } catch (e) {
-      print('Connection error: $e');
-      setState(() => _isLoading = false);
+      print('Connection error in Dart: $e');
+      setState(() {
+        _isLoading = false;
+      });
+      _showErrorSnackBar('An error occurred during connection: $e');
     }
   }
 
@@ -190,7 +274,7 @@ class _FreeBudsControllerState extends State<FreeBudsController> {
     await FreeBudsService.disconnectDevice();
     setState(() {
       _isConnected = false;
-      _deviceInfo = "Not connected";
+      _deviceInfo = null;
       _batteryInfo = null;
       _ancStatus = null;
       _isLoading = false;
@@ -199,61 +283,61 @@ class _FreeBudsControllerState extends State<FreeBudsController> {
 
   // --- Feature Setters ---
 
-      Future<void> _setAncMode(int mode) async {
-      try {
-        // Set loading state to prevent UI flickering
-        setState(() => _isLoading = true);
+  Future<void> _setAncMode(int mode) async {
+    try {
+      // Set loading state to prevent UI flickering
+      setState(() => _isLoading = true);
 
-        final success = await FreeBudsService.setAncMode(mode);
-        if (success) {
-          // Give the device time to process the command
-          await Future.delayed(const Duration(milliseconds: 500));
+      final success = await FreeBudsService.setAncMode(mode);
+      if (success) {
+        // Give the device time to process the command
+        await Future.delayed(const Duration(milliseconds: 500));
 
-          // Only update ANC status instead of all device status
-          await _updateAncStatusOnly();
-        } else {
-          _showErrorSnackBar('Failed to set ANC mode');
-        }
-      } catch (e) {
-        _showErrorSnackBar('Error setting ANC mode: $e');
-      } finally {
-        if (mounted) {
-          setState(() => _isLoading = false);
-        }
+        // Only update ANC status instead of all device status
+        await _updateAncStatusOnly();
+      } else {
+        _showErrorSnackBar('Failed to set ANC mode');
+      }
+    } catch (e) {
+      _showErrorSnackBar('Error setting ANC mode: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
       }
     }
-
-   Future<void> _setAncLevel(int level) async {
-  try {
-    print('Setting ANC level to: $level');
-    final success = await FreeBudsService.setAncLevel(level);
-    if (success) {
-      // Longer delay for awareness mode changes
-      await Future.delayed(const Duration(milliseconds: 800));
-      await _updateAncStatusOnly();
-    } else {
-      _showErrorSnackBar('Failed to set ANC level');
-    }
-  } catch (e) {
-    _showErrorSnackBar('Error setting ANC level: $e');
   }
-}
 
-Future<void> _updateAncStatusOnly() async {
-  if (!_isConnected || !mounted) return;
-
-  try {
-    final ancStatus = await FreeBudsService.getAncStatus();
-    print('Received ANC status: $ancStatus'); // Add this debug line
-    if (mounted) {
-      setState(() {
-        _ancStatus = ancStatus;
-      });
+  Future<void> _setAncLevel(int level) async {
+    try {
+      print('Setting ANC level to: $level');
+      final success = await FreeBudsService.setAncLevel(level);
+      if (success) {
+        // Longer delay for awareness mode changes
+        await Future.delayed(const Duration(milliseconds: 800));
+        await _updateAncStatusOnly();
+      } else {
+        _showErrorSnackBar('Failed to set ANC level');
+      }
+    } catch (e) {
+      _showErrorSnackBar('Error setting ANC level: $e');
     }
-  } catch (e) {
-    print("Error updating ANC status: $e");
   }
-}
+
+  Future<void> _updateAncStatusOnly() async {
+    if (!_isConnected || !mounted) return;
+
+    try {
+      final ancStatus = await FreeBudsService.getAncStatus();
+      print('Received ANC status: $ancStatus'); // Add this debug line
+      if (mounted) {
+        setState(() {
+          _ancStatus = ancStatus;
+        });
+      }
+    } catch (e) {
+      print("Error updating ANC status: $e");
+    }
+  }
 
   Future<void> _onWearDetectionChanged(bool value) async {
     if (await FreeBudsService.setWearDetection(value)) setState(() => _isWearDetectionEnabled = value);
@@ -270,38 +354,69 @@ Future<void> _updateAncStatusOnly() async {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('FreeBuds Controller'),
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        actions: [
-          if (_isConnected && !_isLoading)
-            IconButton(
-              icon: const Icon(Icons.refresh),
-              onPressed: _updateAllDeviceStatus,
-              tooltip: 'Refresh Status',
-            ),
-        ],
-      ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : ListView(
-              padding: const EdgeInsets.all(8.0),
-              children: [
-                _buildConnectionCard(),
-                if (_isConnected) ...[
-                  _buildBatteryCard(),
-                  _buildAncCard(),
-                  _buildSettingsCard(),
+    return WindowBorder(
+        color: Colors.transparent,
+        width: 0,
+        child: Scaffold(
+          // Transparent only on Windows (for acrylic/mica)
+          backgroundColor: Platform.isWindows
+              ? Colors.transparent
+              : Theme.of(context).colorScheme.surface,
+
+          appBar: AppBar(
+            elevation: 0,
+            backgroundColor: Colors.black12,
+            title: Platform.isWindows
+                ? WindowTitleBarBox(
+              child: Row(
+                children: [
+                  Expanded(
+                    child: MoveWindow(
+                      child: const Text(
+                        "FreeBuds Controller",
+                        style: TextStyle(color: Colors.white),
+                      ),
+                    ),
+                  ),
+                  const WindowButtons(),
                 ],
-              ],
-            ),
+              ),
+            )
+                : const Text("FreeBuds Controller"),
+          ),
+
+          body: Stack( // Use a Stack to layer the background and the content
+            children: [
+              // SafeArea ensures your UI avoids the system status bar and notches.
+              SafeArea(
+                child: ListView(
+                  padding: const EdgeInsets.symmetric(horizontal: 16.0), // Main padding for the list
+                  children: [
+                    // This SizedBox provides the top padding that was missing.
+                    const SizedBox(height: 60),
+
+                    // Your existing cards will now sit perfectly inside this padded list.
+                    _buildConnectionCard(),
+                    const SizedBox(height: 16), // Spacing between cards
+                    if (_isConnected) ...[
+                      _buildBatteryCard(),
+                      const SizedBox(height: 16),
+                      _buildAncCard(),
+                      const SizedBox(height: 16),
+                      _buildSettingsCard(),
+                      const SizedBox(height: 16),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+      )
     );
   }
 
 
-  Widget _buildConnectionCard() => Card(
+  Widget _buildConnectionCard() => GlassmorphicCard(
     child: Padding(
       padding: const EdgeInsets.all(16.0),
       child: Column(
@@ -313,7 +428,27 @@ Future<void> _updateAncStatusOnly() async {
             children: [
               Icon(_isConnected ? Icons.bluetooth_connected : Icons.bluetooth_disabled, color: _isConnected ? Colors.green : Colors.red),
               const SizedBox(width: 8),
-              Expanded(child: Text(_deviceInfo, style: Theme.of(context).textTheme.bodyMedium)),
+              Expanded(
+                  child: Builder( // Using a Builder to cleanly handle the logic
+                      builder: (context) {
+                        if (!_isConnected || _deviceInfo == null) {
+                          return const Text("Not connected");
+                        }
+                        if (_deviceInfo!['error'] != null) {
+                          return Text("Error: ${_deviceInfo!['error']}");
+                        }
+
+                        final model = _deviceInfo!['model'] ?? 'Unknown Model';
+                        final firmware = _deviceInfo!['firmware_version'] ?? 'N/A';
+                        final serial = _deviceInfo!['serial_number'] ?? 'N/A';
+
+                        return Text(
+                          '$model\nFirmware: $firmware  |  Serial: $serial',
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        );
+                      }
+                  )
+              ),
             ],
           ),
           const SizedBox(height: 16),
@@ -330,83 +465,97 @@ Future<void> _updateAncStatusOnly() async {
     ),
   );
 
-   // --- WIDGET BUILDER METHODS ---
+  // --- WIDGET BUILDER METHODS ---
 
-Widget _buildAncCard() {
-  const cancellationLevels = { 0: 'Comfortable', 1: 'Normal', 2: 'Ultra', 3: 'Dynamic' };
+  Widget _buildAncCard() {
+    const cancellationLevels = { 0: 'Comfortable', 1: 'Normal', 2: 'Ultra', 3: 'Dynamic' };
 
-  final currentMode = _ancStatus?['mode'] ?? 0;
-  final currentLevel = _ancStatus?['level'] ?? 0;
+    final currentMode = _ancStatus?['mode'] ?? 0;
+    final currentLevel = _ancStatus?['level'] ?? 0;
 
-  return Card(
-    child: Padding(
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('Noise Cancellation', style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 12),
-          SegmentedButton<int>(
-            segments: const [
-              ButtonSegment(value: 0, label: Text('Off')),
-              ButtonSegment(value: 1, label: Text('On')),
-              ButtonSegment(value: 2, label: Text('Aware')),
-            ],
-            selected: {currentMode},
-            onSelectionChanged: (newSelection) {
-              if (newSelection.first != currentMode) {
-                _setAncMode(newSelection.first);
-              }
-            },
-          ),
-          if (currentMode == 1) ...[
-            const Divider(height: 24),
-            Text('Cancellation Level', style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8.0,
-              runSpacing: 4.0,
-              children: cancellationLevels.entries.map((entry) {
-                return ChoiceChip(
-                  label: Text(entry.value),
-                  selected: currentLevel == entry.key,
-                  onSelected: (selected) {
-                    if (selected && currentLevel != entry.key) {
-                      _setAncLevel(entry.key);
-                    }
-                  },
-                );
-              }).toList(),
-            )
-          ],
-          if (currentMode == 2) ...[
-            const Divider(height: 24),
-            SwitchListTile(
-              title: const Text('Voice Boost'),
-              subtitle: const Text('Enhanced voice clarity'),
-              value: currentLevel == 1, // The getter logic returns 1 for voice boost, 0 for normal.
-              onChanged: (value) {
-                // --- IMPROVEMENT START ---
-                // Use the new constants for clarity.
-                _setAncLevel(value ? AncLevelConstants.voiceBoost : AncLevelConstants.normalAwareness);
-                // --- IMPROVEMENT END ---
+    return GlassmorphicCard(
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Noise Cancellation', style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 12),
+            SegmentedButton<int>(
+              segments: const [
+                ButtonSegment(value: 0, label: Text('Off')),
+                ButtonSegment(value: 1, label: Text('On')),
+                ButtonSegment(value: 2, label: Text('Aware')),
+              ],
+              selected: {currentMode},
+              onSelectionChanged: (newSelection) {
+                if (newSelection.first != currentMode) {
+                  _setAncMode(newSelection.first);
+                }
               },
             ),
+            if (currentMode == 1) ...[
+              const Divider(height: 24),
+              Text('Cancellation Level', style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8.0,
+                runSpacing: 4.0,
+                children: cancellationLevels.entries.map((entry) {
+                  return ChoiceChip(
+                    label: Text(entry.value),
+                    selected: currentLevel == entry.key,
+                    onSelected: (selected) {
+                      if (selected && currentLevel != entry.key) {
+                        _setAncLevel(entry.key);
+                      }
+                    },
+                  );
+                }).toList(),
+              )
+            ],
+            if (currentMode == 2) ...[
+              const Divider(height: 24),
+              SwitchListTile(
+                title: const Text('Voice Boost'),
+                subtitle: const Text('Enhanced voice clarity'),
+                value: currentLevel == 1, // The getter logic returns 1 for voice boost, 0 for normal.
+                onChanged: (value) {
+                  // Use the new constants for clarity.
+                  _setAncLevel(value ? AncLevelConstants.voiceBoost : AncLevelConstants.normalAwareness);
+                },
+              ),
+            ],
           ],
-        ],
+        ),
       ),
-    ),
-  );
-}
+    );
+  }
 
-  Widget _buildBatteryCard() => Card(
+  Widget _buildBatteryCard() => GlassmorphicCard( // <-- Use the new widget here
     child: Padding(
-      padding: const EdgeInsets.all(16.0),
+      padding: const EdgeInsets.all(20.0), // Increased padding for a better look
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Battery', style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 16),
+          // Add a subtle icon next to the title
+          Row(
+            children: [
+              Icon(
+                Icons.battery_charging_full_rounded,
+                color: Colors.white.withOpacity(0.7),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Battery',
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white, // Ensure text is visible on the glass
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20), // Increased spacing
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
@@ -420,7 +569,7 @@ Widget _buildAncCard() {
     ),
   );
 
-  Widget _buildSettingsCard() => Card(
+  Widget _buildSettingsCard() => GlassmorphicCard(
     child: Padding(
       padding: const EdgeInsets.all(16.0),
       child: Column(
@@ -468,6 +617,15 @@ Widget _buildAncCard() {
               Navigator.of(context).push(MaterialPageRoute(builder: (context) => const EqualizerPage()));
             },
           ),
+          const Divider(),
+          ListTile(
+            title: const Text('Connected Devices'),
+            subtitle: const Text('Manage dual-device connection'),
+            trailing: const Icon(Icons.devices_other),
+            onTap: () {
+              Navigator.of(context).push(MaterialPageRoute(builder: (context) => const DualConnectPage()));
+            },
+          ),
         ],
       ),
     ),
@@ -501,3 +659,109 @@ Widget _buildAncCard() {
   }
 }
 
+class GlassmorphicCard extends StatelessWidget {
+  final Widget child;
+
+  const GlassmorphicCard({
+    super.key,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(24.0),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 15.0, sigmaY: 15.0), // Slightly more blur
+        child: Container(
+          decoration: BoxDecoration(
+            // --- THIS IS THE FIX FOR THE "GLOW" ---
+            // Use a solid, semi-transparent color instead of a gradient.
+            color: Colors.white.withOpacity(0.08),
+            // --- END OF FIX ---
+            borderRadius: BorderRadius.circular(24.0),
+            border: Border.all(
+              color: Colors.white.withOpacity(0.15), // Border is slightly more opaque
+              width: 0.8,
+            ),
+          ),
+          child: child,
+        ),
+      ),
+    );
+  }
+}
+
+class AuroraBackground extends StatelessWidget {
+  const AuroraBackground({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        // This ensures the background has a base color.
+        Container(
+          decoration: const BoxDecoration(
+            color: Color(0xff1a1a2e), // A deep navy blue base
+          ),
+        ),
+        // A blurred circle positioned in the top-left.
+        Positioned(
+          top: -100,
+          left: -150,
+          child: Container(
+            height: 400,
+            width: 400,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: Colors.purple.withOpacity(0.5),
+            ),
+          ),
+        ),
+        // A second blurred circle positioned in the bottom-right.
+        Positioned(
+          bottom: -200,
+          right: -150,
+          child: Container(
+            height: 500,
+            width: 500,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: Colors.blue.withOpacity(0.5),
+            ),
+          ),
+        ),
+        // The blur effect that covers the entire screen, affecting the circles.
+        BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 100.0, sigmaY: 100.0),
+          child: Container(
+            decoration: BoxDecoration(color: Colors.black.withOpacity(0.1)),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class WindowButtons extends StatelessWidget {
+  const WindowButtons({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final buttonColors = WindowButtonColors(
+      iconNormal: Colors.white,
+      mouseOver: Colors.white.withOpacity(0.2),
+      mouseDown: Colors.white.withOpacity(0.4),
+      iconMouseOver: Colors.white,
+      iconMouseDown: Colors.white,
+    );
+
+    return Row(
+      children: [
+        MinimizeWindowButton(colors: buttonColors),
+        MaximizeWindowButton(colors: buttonColors),
+        CloseWindowButton(colors: buttonColors),
+      ],
+    );
+  }
+}
