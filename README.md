@@ -1,6 +1,8 @@
 # freebuds_flutter
 
-A new Flutter project.
+this thing control huawei freebuds, spefiicaly freebuds 6i.
+
+Made in c++, dart and flutter. For android and windows. ( i dont own a mac )
 
 ## Getting Started
 
