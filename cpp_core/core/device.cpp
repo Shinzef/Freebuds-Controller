@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <iomanip> // For std::setw, etc. in MAC address formatting
 #include <sstream> // For std::stringstream
+#include <chrono>
 
 // =================================================================
 // Helpers
@@ -76,57 +77,26 @@ void Device::disconnect() { m_client->disconnect(); }
 bool Device::is_connected() const { return m_client->is_connected(); }
 
 // --- Write API Delegation (Complete) ---
-bool Device::set_anc_mode(AncMode m) { return m_writer ? m_writer->set_anc_mode(m) : false; }
-bool Device::set_anc_level(AncLevel level) {
-	return m_writer ? m_writer->set_anc_level(level) : false;
-}
-bool Device::set_wear_detection(bool e) {
-	return m_writer ? m_writer->set_wear_detection(e) : false;
-}
-bool Device::set_low_latency(bool e) { return m_writer ? m_writer->set_low_latency(e) : false; }
-bool Device::set_sound_quality_preference(SoundQualityPreference p) {
-	return m_writer ? m_writer
-		->set_sound_quality_preference(p == SoundQualityPreference::PRIORITIZE_QUALITY) : false;
-}
-bool Device::set_double_tap_action(EarSide s, GestureAction a) {
-	return m_writer ? m_writer->set_double_tap_action(s, a) : false;
-}
-bool Device::set_triple_tap_action(EarSide s, GestureAction a) {
-	return m_writer ? m_writer->set_triple_tap_action(s, a) : false;
-}
-bool Device::set_swipe_action(GestureAction a) {
-	return m_writer ? m_writer->set_swipe_action(a) : false;
-}
-bool Device::set_long_tap_action(EarSide s, GestureAction a) {
-	return m_writer ? m_writer->set_long_tap_action(s, a) : false;
-}
-bool Device::set_long_tap_anc_cycle(EarSide s, AncCycleMode m) {
-	return m_writer ? m_writer->set_long_tap_anc_cycle(s, m) : false;
-}
-bool Device::set_incall_double_tap_action(GestureAction a) {
-	return m_writer ? m_writer->set_incall_double_tap_action(a) : false;
-}
-bool Device::set_equalizer_preset(uint8_t id) {
-	return m_writer ? m_writer->set_equalizer_preset(id) : false;
-}
-bool Device::create_or_update_custom_equalizer(const CustomEqPreset &p) {
-	return m_writer ? m_writer->create_or_update_custom_equalizer(p) : false;
-}
-bool Device::delete_custom_equalizer(const CustomEqPreset &p) {
-	return m_writer ? m_writer->delete_custom_equalizer(p) : false;
-}
-bool Device::create_fake_preset(FakePreset p, uint8_t id) {
-	return m_writer ? m_writer->create_fake_preset(p, id) : false;
-}
-bool Device::set_dual_connect_enabled(bool e) {
-	return m_writer ? m_writer->set_dual_connect_enabled(e) : false;
-}
-bool Device::set_dual_connect_preferred(const std::string &mac) {
-	return m_writer ? m_writer->set_dual_connect_preferred(mac) : false;
-}
-bool Device::dual_connect_action(const std::string &mac, uint8_t code) {
-	return m_writer ? m_writer->dual_connect_action(mac, code) : false;
-}
+void Device::set_anc_mode(AncMode m) { if (m_writer) m_writer->set_anc_mode(m); }
+void Device::set_anc_level(AncLevel level) { if (m_writer) m_writer->set_anc_level(level); }
+void Device::set_wear_detection(bool e) { if (m_writer) m_writer->set_wear_detection(e); }
+void Device::set_low_latency(bool e) { if (m_writer) m_writer->set_low_latency(e); }
+void Device::set_sound_quality_preference(SoundQualityPreference p) {
+		if (m_writer) m_writer->set_sound_quality_preference(p == SoundQualityPreference::PRIORITIZE_QUALITY);
+	}
+void Device::set_double_tap_action(EarSide s, GestureAction a) { if (m_writer) m_writer->set_double_tap_action(s, a); }
+void Device::set_triple_tap_action(EarSide s, GestureAction a) { if (m_writer) m_writer->set_triple_tap_action(s, a); }
+void Device::set_swipe_action(GestureAction a) { if (m_writer) m_writer->set_swipe_action(a); }
+void Device::set_long_tap_action(EarSide s, GestureAction a) { if (m_writer) m_writer->set_long_tap_action(s, a); }
+void Device::set_long_tap_anc_cycle(EarSide s, AncCycleMode m) { if (m_writer) m_writer->set_long_tap_anc_cycle(s, m); }
+void Device::set_incall_double_tap_action(GestureAction a) { if (m_writer) m_writer->set_incall_double_tap_action(a); }
+void Device::set_equalizer_preset(uint8_t id) { if (m_writer) m_writer->set_equalizer_preset(id); }
+void Device::create_or_update_custom_equalizer(const CustomEqPreset &p) { if (m_writer) m_writer->create_or_update_custom_equalizer(p); }
+void Device::delete_custom_equalizer(const CustomEqPreset &p) { if (m_writer) m_writer->delete_custom_equalizer(p); }
+void Device::create_fake_preset(FakePreset p, uint8_t id) { if (m_writer) m_writer->create_fake_preset(p, id); }
+void Device::set_dual_connect_enabled(bool e) { if (m_writer) m_writer->set_dual_connect_enabled(e); }
+void Device::set_dual_connect_preferred(const std::string &mac) { if (m_writer) m_writer->set_dual_connect_preferred(mac); }
+void Device::dual_connect_action(const std::string &mac, uint8_t code) { if (m_writer) m_writer->dual_connect_action(mac, code); }
 
 // --- Read API (Complete) ---
 std::optional<DeviceInfo> Device::get_device_info() {
@@ -248,39 +218,52 @@ std::optional<SoundQualityPreference> Device::get_sound_quality_preference() {
 }
 
 // --- Private Helpers ---
-std::optional<HuaweiSppPacket> Device::send_and_get_response(const HuaweiSppPacket &request,
-															 const std::array<uint8_t, 2> &expected_response_cmd) {
-	// --- ADDED LOGGING ---
-	std::cout << "DEVICE: Preparing to send command 0x" << std::hex << request.command_id
-			  << std::dec << std::endl;
-	// --- END LOGGING ---
+std::optional<HuaweiSppPacket> Device::send_and_get_response(const HuaweiSppPacket& request, const std::array<uint8_t, 2>& expected_response_cmd) {
+	// We expect the response to have the same command ID as the request.
+	uint16_t expected_id = bytes_to_u16(expected_response_cmd[0], expected_response_cmd[1]);
 
-	if (m_client->send(request.to_bytes())) {
-		// --- ADDED LOGGING ---
-		std::cout << "DEVICE: Send command successful. Now attempting to receive response..."
-				  << std::endl;
-		// --- END LOGGING ---
+	std::cout << "[DEVICE] Sending request for command 0x" << std::hex << request.command_id << " and waiting for response 0x" << expected_id << std::dec << std::endl;
 
+	if (!m_client->send(request.to_bytes())) {
+		std::cerr << "[DEVICE] ERROR: m_client->send() returned false." << std::endl;
+		return std::nullopt;
+	}
+
+	// Instead of polling once, we now have a dedicated loop with a timeout.
+	// This gives the system time to clear out old notifications and receive the correct packet.
+	const int timeout_ms = 2000; // 2-second timeout.
+	auto start_time = std::chrono::steady_clock::now();
+
+	while (std::chrono::steady_clock::now() - start_time < std::chrono::milliseconds(timeout_ms)) {
+		// The receive_all() function itself has a short internal timeout.
+		// We call it repeatedly.
 		auto responses_bytes = m_client->receive_all();
 
-		// --- ADDED LOGGING ---
-		std::cout << "DEVICE: receive_all() completed. Found " << responses_bytes.size()
-				  << " packets." << std::endl;
-		// --- END LOGGING ---
+		if (!responses_bytes.empty()) {
+			std::cout << "[DEVICE] Received " << responses_bytes.size() << " packet(s) from client." << std::endl;
+		}
 
-		for (const auto &bytes : responses_bytes) {
+		// Now, iterate through all the packets we just received.
+		for (const auto& bytes : responses_bytes) {
 			if (auto packet = HuaweiSppPacket::from_bytes(bytes)) {
-				if (packet->command_id
-					== bytes_to_u16(expected_response_cmd[0], expected_response_cmd[1])) {
-					std::cout << "DEVICE: Found matching response packet." << std::endl;
-					return packet;
+				// Check if this packet is the one we are looking for.
+				if (packet->command_id == expected_id) {
+					std::cout << "[DEVICE] SUCCESS: Found matching response packet for command 0x" << std::hex << expected_id << std::dec << std::endl;
+					return packet; // Success! Return the correct packet.
+				} else {
+					// This is a valid packet, but not the one we want.
+					// It's likely a notification. We log it and ignore it.
+					std::cout << "[DEVICE] Ignoring unrelated packet for command 0x" << std::hex << packet->command_id << std::dec << std::endl;
 				}
 			}
 		}
-		std::cerr << "DEVICE: No matching response packet was found after receiving." << std::endl;
-	} else {
-		std::cerr << "DEVICE: ERROR - m_client->send() returned false." << std::endl;
+		// If we didn't find our packet, sleep for a very short duration
+		// to prevent a busy-wait loop that hogs the CPU.
+		std::this_thread::sleep_for(std::chrono::milliseconds(50));
 	}
+
+	// If we exit the loop, it means the 2-second timeout was reached.
+	std::cerr << "[DEVICE] ERROR: Timed out after " << timeout_ms << "ms waiting for response to command 0x" << std::hex << expected_id << std::dec << std::endl;
 	return std::nullopt;
 }
 

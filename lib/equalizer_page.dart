@@ -1,8 +1,9 @@
 // lib/equalizer_page.dart
 
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide BoxDecoration, BoxShadow;
 import 'services/freebuds_service.dart';
 import 'eq_editor_page.dart'; // <-- IMPORT OUR NEW EDITOR PAGE
+import 'main.dart';
 
 class EqualizerPage extends StatefulWidget {
   const EqualizerPage({super.key});
@@ -23,7 +24,10 @@ class _EqualizerPageState extends State<EqualizerPage> {
   };
 
   final Map<int, String> _presetNames = {
-    0: 'Default', 1: 'Bass Boost', 2: 'Treble Boost', 3: 'Voices',
+    0: 'Default',
+    1: 'Bass Boost',
+    2: 'Treble Boost',
+    3: 'Voices',
   };
 
   @override
@@ -56,15 +60,18 @@ class _EqualizerPageState extends State<EqualizerPage> {
     if (newId == null || !mounted) return;
 
     // Before setting a new preset, check if a fake preset was active and delete it.
-    final customPresets = List<Map<dynamic, dynamic>>.from(_eqInfo!['custom_presets'] ?? []);
+    final customPresets =
+        List<Map<dynamic, dynamic>>.from(_eqInfo!['custom_presets'] ?? []);
     final activeSymphony = customPresets.any((p) => p['id'] == _symphonyId);
     final activeHifi = customPresets.any((p) => p['id'] == _hifiLiveId);
 
     if (activeSymphony) {
-      await FreeBudsService.deleteCustomEq(customPresets.firstWhere((p) => p['id'] == _symphonyId));
+      await FreeBudsService.deleteCustomEq(
+          customPresets.firstWhere((p) => p['id'] == _symphonyId));
     }
     if (activeHifi) {
-      await FreeBudsService.deleteCustomEq(customPresets.firstWhere((p) => p['id'] == _hifiLiveId));
+      await FreeBudsService.deleteCustomEq(
+          customPresets.firstWhere((p) => p['id'] == _hifiLiveId));
     }
 
     setState(() => _eqInfo!['current_preset_id'] = newId);
@@ -76,7 +83,8 @@ class _EqualizerPageState extends State<EqualizerPage> {
     }
   }
 
-  Future<void> _showDeleteConfirmationDialog(Map<dynamic, dynamic> preset) async {
+  Future<void> _showDeleteConfirmationDialog(
+      Map<dynamic, dynamic> preset) async {
     final String name = preset['name'];
     final bool? shouldDelete = await showDialog<bool>(
       context: context,
@@ -84,10 +92,13 @@ class _EqualizerPageState extends State<EqualizerPage> {
         title: const Text('Delete Preset'),
         content: Text("Are you sure you want to delete the '$name' preset?"),
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel')),
           TextButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: Text('Delete', style: TextStyle(color: Theme.of(context).colorScheme.error)),
+            child: Text('Delete',
+                style: TextStyle(color: Theme.of(context).colorScheme.error)),
           ),
         ],
       ),
@@ -102,7 +113,8 @@ class _EqualizerPageState extends State<EqualizerPage> {
   // --- THIS IS THE NEW NAVIGATION LOGIC ---
   Future<void> _navigateToEditor({Map<dynamic, dynamic>? preset}) async {
     final result = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(builder: (context) => EqEditorPage(initialPreset: preset)),
+      MaterialPageRoute(
+          builder: (context) => EqEditorPage(initialPreset: preset)),
     );
     // If the editor page popped with `true`, it means we saved, so we should refresh.
     if (result == true) {
@@ -123,8 +135,8 @@ class _EqualizerPageState extends State<EqualizerPage> {
 
     // Check if the OTHER fake preset is active, and if so, delete it first.
     final otherFakeId = (fakeId == _symphonyId) ? _hifiLiveId : _symphonyId;
-    final customPresets = List<Map<dynamic, dynamic>>.from(
-        _eqInfo!['custom_presets'] ?? []);
+    final customPresets =
+        List<Map<dynamic, dynamic>>.from(_eqInfo!['custom_presets'] ?? []);
     if (customPresets.any((p) => p['id'] == otherFakeId)) {
       await FreeBudsService.deleteCustomEq(
           customPresets.firstWhere((p) => p['id'] == otherFakeId));
@@ -143,15 +155,25 @@ class _EqualizerPageState extends State<EqualizerPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Equalizer')),
+      backgroundColor: Colors.transparent, // Make scaffold transparent
+      appBar: AppBar(
+        title: const Text('Equalizer'),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+      ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : _eqInfo == null
-          ? Center(child: Text('Failed to load settings.'))
-          : RefreshIndicator(onRefresh: () => _loadEqInfo(), child: _buildPresetList()),
+              ? const Center(child: Text('Failed to load settings.'))
+              : RefreshIndicator(
+                  onRefresh: () => _loadEqInfo(),
+                  child: _buildPresetList(),
+                ),
       floatingActionButton: FloatingActionButton(
-        onPressed: () => _navigateToEditor(), // Navigate to create a new preset
-        child: const Icon(Icons.add),
+        onPressed: () =>
+            _navigateToEditor(), // Navigate to create a new preset
+        backgroundColor: Theme.of(context).colorScheme.primary,
+        child: const Icon(Icons.add, color: Colors.white),
         tooltip: 'Create Custom Preset',
       ),
     );
@@ -160,80 +182,122 @@ class _EqualizerPageState extends State<EqualizerPage> {
   Widget _buildPresetList() {
     final int currentPresetId = _eqInfo!['current_preset_id'];
     final builtInIds = List<int>.from(_eqInfo!['built_in_preset_ids'] ?? []);
-    final customPresets = List<Map<dynamic, dynamic>>.from(_eqInfo!['custom_presets'] ?? []);
+    final customPresets =
+        List<Map<dynamic, dynamic>>.from(_eqInfo!['custom_presets'] ?? []);
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(8, 8, 8, 80),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 80),
       children: [
-        Card(
-          clipBehavior: Clip.antiAlias,
+        GlassmorphicCard(
           child: Padding(
             padding: const EdgeInsets.all(16.0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Built-in Presets', style: Theme.of(context).textTheme.titleLarge),
-                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Icon(
+                      Icons.equalizer_rounded,
+                      size: 28,
+                      color: Theme.of(context)
+                          .textTheme
+                          .titleLarge
+                          ?.color
+                          ?.withOpacity(0.8),
+                    ),
+                    const SizedBox(width: 12),
+                    Text('Built-in Presets',
+                        style: Theme.of(context).textTheme.titleLarge),
+                  ],
+                ),
+                const Divider(height: 24),
                 Wrap(
                   spacing: 8.0,
-                  children: builtInIds.map((id) => ChoiceChip(
-                    label: Text(_presetNames[id] ?? 'Preset $id'),
-                    selected: currentPresetId == id,
-                    onSelected: (_) => _onPresetChanged(id),
-                  )).toList(),
-                ),
-                ChoiceChip(
-                  label: Text(_fakePresetNames[_symphonyId]!),
-                  selected: currentPresetId == _symphonyId,
-                  onSelected: (_) => _onFakePresetChanged(_symphonyId),
-                ),
-                ChoiceChip(
-                  label: Text(_fakePresetNames[_hifiLiveId]!),
-                  selected: currentPresetId == _hifiLiveId,
-                  onSelected: (_) => _onFakePresetChanged(_hifiLiveId),
+                  runSpacing: 4.0,
+                  children: [
+                    ...builtInIds.map((id) => ChoiceChip(
+                          label: Text(_presetNames[id] ?? 'Preset $id'),
+                          selected: currentPresetId == id,
+                          onSelected: (_) => _onPresetChanged(id),
+                        )),
+                    ChoiceChip(
+                      label: Text(_fakePresetNames[_symphonyId]!),
+                      selected: currentPresetId == _symphonyId,
+                      onSelected: (_) => _onFakePresetChanged(_symphonyId),
+                    ),
+                    ChoiceChip(
+                      label: Text(_fakePresetNames[_hifiLiveId]!),
+                      selected: currentPresetId == _hifiLiveId,
+                      onSelected: (_) => _onFakePresetChanged(_hifiLiveId),
+                    ),
+                  ],
                 ),
               ],
             ),
           ),
         ),
-        Card(
-          clipBehavior: Clip.antiAlias,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                child: Text('Custom Presets', style: Theme.of(context).textTheme.titleLarge),
-              ),
-              if (customPresets.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 24.0),
-                  child: Center(child: Text('Press the + button to create a preset.')),
+        const SizedBox(height: 16),
+        GlassmorphicCard(
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      Icons.edit_rounded,
+                      size: 28,
+                      color: Theme.of(context)
+                          .textTheme
+                          .titleLarge
+                          ?.color
+                          ?.withOpacity(0.8),
+                    ),
+                    const SizedBox(width: 12),
+                    Text('Custom Presets',
+                        style: Theme.of(context).textTheme.titleLarge),
+                  ],
                 ),
-              ...customPresets.map((preset) {
-                final int id = preset['id'];
-                final String name = preset['name'];
-                return ListTile(
-                  title: Text(name),
-                  leading: Radio<int>(
-                    value: id,
-                    groupValue: currentPresetId,
-                    onChanged: _onPresetChanged,
+                const Divider(height: 24),
+                if (customPresets.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 24.0),
+                    child: Center(
+                        child: Text('Press the + button to create a preset.')),
                   ),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      IconButton(icon: const Icon(Icons.edit_outlined), onPressed: () => _navigateToEditor(preset: preset)), // Navigate to edit
-                      IconButton(
-                          icon: Icon(Icons.delete_outline, color: Theme.of(context).colorScheme.error),
-                          onPressed: () => _showDeleteConfirmationDialog(preset) // <-- Pass the whole map here too
-                      ),
-                    ],
-                  ),
-                  onTap: () => _onPresetChanged(id),
-                );
-              }),
-            ],
+                ...customPresets.map((preset) {
+                  final int id = preset['id'];
+                  final String name = preset['name'];
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(name),
+                    leading: Radio<int>(
+                      value: id,
+                      groupValue: currentPresetId,
+                      onChanged: _onPresetChanged,
+                    ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                            icon: const Icon(Icons.edit_outlined),
+                            onPressed: () => _navigateToEditor(
+                                preset:
+                                    preset)), // Navigate to edit
+                        IconButton(
+                            icon: Icon(Icons.delete_outline,
+                                color: Theme.of(context).colorScheme.error),
+                            onPressed: () => _showDeleteConfirmationDialog(
+                                preset) // <-- Pass the whole map here too
+                            ),
+                      ],
+                    ),
+                    onTap: () => _onPresetChanged(id),
+                  );
+                }),
+              ],
+            ),
           ),
         ),
       ],

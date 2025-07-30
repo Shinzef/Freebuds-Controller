@@ -1,6 +1,7 @@
 #include "command_writer.h"
 #include "protocol/huawei_commands.h"
 #include "protocol/huawei_packet.h"
+#include "core/debug_log.h"
 #include <iostream>
 #include <stdexcept>
 
@@ -47,33 +48,53 @@ std::pair<uint8_t, uint8_t> anc_level_to_int(AncLevel level) {
     }
 }
 
-CommandWriter::CommandWriter(IBluetoothSPPClient& client) : m_client(client) {}
+CommandWriter::CommandWriter(IBluetoothSPPClient& client) : m_client(client), m_running(true) {
+	m_worker_thread = std::thread(&CommandWriter::process_queue, this); // Start the worker thread upon construction
+}
+
+CommandWriter::~CommandWriter() {
+	m_command_queue.stop(); // Signal the queue to stop and wake up the worker thread
+	// Wait for the worker thread to finish its current task and exit
+	if (m_worker_thread.joinable()) {
+		m_worker_thread.join();
+	}
+}
+
+void CommandWriter::process_queue() {
+	std::function<void()> task;
+	// This loop will block on wait_and_pop until a task is available or the queue is stopped.
+	while (m_command_queue.wait_and_pop(task)) {
+		task();
+	}
+}
 
 void CommandWriter::send_and_log(const HuaweiSppPacket& request, const std::string& description) {
-    std::cout << ">>> Sending " << description << " request..." << std::endl;
-    if (m_client.send(request.to_bytes())) {
-        std::cout << "<<< Command sent successfully." << std::endl;
-        m_client.receive_all(); // Consume response
-    } else {
-        std::cerr << "!!! Failed to send " << description << " request." << std::endl;
-    }
+	m_command_queue.push([this, request, description] {
+	 std::cout << ">>> [Worker Thread] Sending " << description << " request..." << std::endl;
+	      if (m_client.send(request.to_bytes())) {
+			  std::cout << "<<< [Worker Thread] Command sent successfully." << std::endl;
+			  // The response consumption should also happen on the worker thread.
+			  m_client.receive_all();
+		  } else {
+			  std::cerr << "!!! [Worker Thread] Failed to send " << description << " request." << std::endl;
+		  }
+	});
 }
 
 // --- ANC / Config ---
-bool CommandWriter::set_anc_mode(AncMode mode) {
-    if (mode == AncMode::UNKNOWN) return false;
+void CommandWriter::set_anc_mode(AncMode mode) {
+    if (mode == AncMode::UNKNOWN) return;
     uint8_t mode_val = static_cast<uint8_t>(mode);
 
     std::vector<uint8_t> payload = {mode_val, 0xFF};
 
     auto request = HuaweiSppPacket::create_write_request(HuaweiCommands::CMD_ANC_WRITE, 1, payload);
     send_and_log(request, "Set ANC Mode");
-    return true;
 }
 
 // This method sets the specific level within a mode.
-bool CommandWriter::set_anc_level(AncLevel level) {
-    if (level == AncLevel::UNKNOWN) return false;
+void CommandWriter::set_anc_level(AncLevel level) {
+    if (level == AncLevel::UNKNOWN) return;
 
     // The Python driver shows that for setting a level, the payload must be [mode, level].
     // We get the {mode, level} pair from our helper.
@@ -93,54 +114,47 @@ bool CommandWriter::set_anc_level(AncLevel level) {
     std::cout << "Sending ANC level packet with payload: ["
               << static_cast<int>(payload[0]) << ", "
               << static_cast<int>(payload[1]) << "]" << std::endl;
-    // --- FIX END ---
-
     send_and_log(request, "Set ANC Level");
-    return true;
 }
 
-bool CommandWriter::set_wear_detection(bool enable) {
+void CommandWriter::set_wear_detection(bool enable) {
     auto request = HuaweiSppPacket::create_write_request(HuaweiCommands::CMD_AUTO_PAUSE_WRITE, 1, {static_cast<uint8_t>(enable ? 1 : 0)});
     send_and_log(request, "Set Wear Detection");
-    return true;
+
 }
 
-bool CommandWriter::set_low_latency(bool enable) {
+void CommandWriter::set_low_latency(bool enable) {
     auto request = HuaweiSppPacket::create_write_request(HuaweiCommands::CMD_LOW_LATENCY_WRITE, 1, {static_cast<uint8_t>(enable ? 1 : 0)});
     send_and_log(request, "Set Low Latency");
-    return true;
 }
 
-bool CommandWriter::set_sound_quality_preference(bool prioritize_quality) {
+void CommandWriter::set_sound_quality_preference(bool prioritize_quality) {
     uint8_t value = prioritize_quality ? 1 : 0;
     auto request = HuaweiSppPacket::create_write_request(
             HuaweiCommands::CMD_SOUND_QUALITY_WRITE, 1, {value}
     );
     send_and_log(request, "Set Sound Quality Preference");
-    return true;
 }
 
 // --- Gestures ---
-bool CommandWriter::set_double_tap_action(EarSide side, GestureAction action) {
-    if (action == GestureAction::UNKNOWN || side == EarSide::BOTH) return false;
+void CommandWriter::set_double_tap_action(EarSide side, GestureAction action) {
+    if (action == GestureAction::UNKNOWN || side == EarSide::BOTH) return;
     uint8_t param_id = (side == EarSide::LEFT) ? 1 : 2;
     int8_t action_code = static_cast<int8_t>(gesture_action_to_int(action));
     auto request = HuaweiSppPacket::create_write_request(HuaweiCommands::CMD_DUAL_TAP_WRITE, param_id, {static_cast<uint8_t>(action_code)});
     send_and_log(request, "Set Double Tap");
-    return true;
 }
 
-bool CommandWriter::set_triple_tap_action(EarSide side, GestureAction action) {
-    if (action == GestureAction::UNKNOWN || side == EarSide::BOTH) return false;
+void CommandWriter::set_triple_tap_action(EarSide side, GestureAction action) {
+    if (action == GestureAction::UNKNOWN || side == EarSide::BOTH) return;
     uint8_t param_id = (side == EarSide::LEFT) ? 1 : 2;
     int8_t action_code = static_cast<int8_t>(gesture_action_to_int(action));
     auto request = HuaweiSppPacket::create_write_request(HuaweiCommands::CMD_TRIPLE_TAP_WRITE, param_id, {static_cast<uint8_t>(action_code)});
     send_and_log(request, "Set Triple Tap");
-    return true;
 }
 
-bool CommandWriter::set_swipe_action(GestureAction action) {
-    if (action != GestureAction::CHANGE_VOLUME && action != GestureAction::OFF) return false;
+void CommandWriter::set_swipe_action(GestureAction action) {
+    if (action != GestureAction::CHANGE_VOLUME && action != GestureAction::OFF) return;
     int8_t action_code = (action == GestureAction::CHANGE_VOLUME)
                          ? static_cast<int8_t>(gesture_action_to_int(GestureAction::CHANGE_VOLUME))
                          : static_cast<int8_t>(gesture_action_to_int(GestureAction::OFF));
@@ -149,48 +163,43 @@ bool CommandWriter::set_swipe_action(GestureAction action) {
     request.parameters[1] = { static_cast<uint8_t>(action_code) };
     request.parameters[2] = { static_cast<uint8_t>(action_code) };
     send_and_log(request, "Set Swipe Action");
-    return true;
 }
 
-bool CommandWriter::set_long_tap_action(EarSide side, GestureAction action) {
-    if (action != GestureAction::SWITCH_ANC && action != GestureAction::OFF) return false;
+void CommandWriter::set_long_tap_action(EarSide side, GestureAction action) {
+    if (action != GestureAction::SWITCH_ANC && action != GestureAction::OFF) return;
     uint8_t param_id = (side == EarSide::LEFT) ? 1 : 2;
     int8_t action_code = static_cast<int8_t>(gesture_action_to_int(action));
     auto request = HuaweiSppPacket::create_write_request(HuaweiCommands::CMD_LONG_TAP_SPLIT_WRITE_BASE, param_id, {static_cast<uint8_t>(action_code)});
     send_and_log(request, "Set Long Tap Action");
-    return true;
 }
 
-bool CommandWriter::set_long_tap_anc_cycle(EarSide side, AncCycleMode cycle_mode) {
-    if (cycle_mode == AncCycleMode::UNKNOWN) return false;
+void CommandWriter::set_long_tap_anc_cycle(EarSide side, AncCycleMode cycle_mode) {
+    if (cycle_mode == AncCycleMode::UNKNOWN) return;
     uint8_t param_id = (side == EarSide::LEFT) ? 1 : 2;
     uint8_t cycle_code = static_cast<uint8_t>(anc_cycle_to_int(cycle_mode));
     auto request = HuaweiSppPacket::create_write_request(HuaweiCommands::CMD_LONG_TAP_SPLIT_WRITE_ANC, param_id, {cycle_code});
     send_and_log(request, "Set Long Tap ANC Cycle");
-    return true;
 }
 
-bool CommandWriter::set_incall_double_tap_action(GestureAction action) {
-    if (action != GestureAction::ANSWER_CALL && action != GestureAction::OFF) return false;
+void CommandWriter::set_incall_double_tap_action(GestureAction action) {
+    if (action != GestureAction::ANSWER_CALL && action != GestureAction::OFF) return;
     int8_t action_code = static_cast<int8_t>(gesture_action_to_int(action));
     auto request = HuaweiSppPacket::create_write_request(HuaweiCommands::CMD_DUAL_TAP_WRITE, 4, {static_cast<uint8_t>(action_code)});
     send_and_log(request, "Set In-Call Double Tap");
-    return true;
 }
 
 // --- Equalizer ---
-bool CommandWriter::set_equalizer_preset(uint8_t preset_id) {
+void CommandWriter::set_equalizer_preset(uint8_t preset_id) {
     auto request = HuaweiSppPacket::create_write_request(
             HuaweiCommands::CMD_EQUALIZER_WRITE, 1, {preset_id}
     );
     send_and_log(request, "Set Built-in Equalizer Preset");
-    return true;
 }
 
-bool CommandWriter::create_or_update_custom_equalizer(const CustomEqPreset& preset) {
+void CommandWriter::create_or_update_custom_equalizer(const CustomEqPreset& preset) {
     if (preset.values.size() != 10) {
         std::cerr << "Custom EQ preset must have exactly 10 values." << std::endl;
-        return false;
+        return;
     }
     std::vector<uint8_t> values_as_uint;
     values_as_uint.reserve(preset.values.size());
@@ -204,23 +213,12 @@ bool CommandWriter::create_or_update_custom_equalizer(const CustomEqPreset& pres
     request.parameters[4] = std::vector<uint8_t>(preset.name.begin(), preset.name.end());
     request.parameters[5] = { 1 };
     send_and_log(request, "Create/Update Custom Equalizer");
-    return true;
 }
 
-//bool CommandWriter::delete_custom_equalizer(uint8_t preset_id) {
-//    auto request = HuaweiSppPacket(bytes_to_u16(HuaweiCommands::CMD_EQUALIZER_WRITE[0], HuaweiCommands::CMD_EQUALIZER_WRITE[1]));
-// request.parameters[1] = { preset_id };
-// request.parameters[5] = { 2 };
-//   send_and_log(request, "Delete Custom Equalizer");
-//
-//    std::cerr << "Deprecated delete_custom_equalizer(id) called. No action taken." << std::endl;
-//    return false;
-//}
-
-bool CommandWriter::delete_custom_equalizer(const CustomEqPreset& preset) {
+void CommandWriter::delete_custom_equalizer(const CustomEqPreset& preset) {
     if (preset.values.size() != 10) {
         std::cerr << "Cannot delete EQ preset with invalid values." << std::endl;
-        return false;
+        return;
     }
     std::vector<uint8_t> values_as_uint;
     values_as_uint.reserve(preset.values.size());
@@ -238,10 +236,9 @@ bool CommandWriter::delete_custom_equalizer(const CustomEqPreset& preset) {
     request.parameters[5] = { 2 };
 
     send_and_log(request, "Delete Custom Equalizer (Correct Payload)");
-    return true;
 }
 
-bool CommandWriter::create_fake_preset(FakePreset preset_type, uint8_t new_id) {
+void CommandWriter::create_fake_preset(FakePreset preset_type, uint8_t new_id) {
     CustomEqPreset preset;
     preset.id = new_id;
 
@@ -252,7 +249,7 @@ bool CommandWriter::create_fake_preset(FakePreset preset_type, uint8_t new_id) {
         preset.name = "Hi-Fi Live";
         preset.values = {-5, 20, 30, 10, 0, 0, -25, -10, 10, 0};
     } else {
-        return false;
+        return;
     }
 
     std::cout << "Creating '" << preset.name << "' as a custom preset with ID " << (int)new_id << "..." << std::endl;
@@ -260,16 +257,15 @@ bool CommandWriter::create_fake_preset(FakePreset preset_type, uint8_t new_id) {
 }
 
 // --- Dual-Connect Methods ---
-bool CommandWriter::set_dual_connect_enabled(bool enable) {
+void CommandWriter::set_dual_connect_enabled(bool enable) {
     auto request = HuaweiSppPacket::create_write_request(
             HuaweiCommands::CMD_DUAL_CONNECT_ENABLED_WRITE, 1, {static_cast<uint8_t>(enable ? 1 : 0)}
     );
     send_and_log(request, "Set Dual-Connect Enabled");
-    return true;
 }
 
-bool CommandWriter::set_dual_connect_preferred(const std::string& mac_address) {
-    if (mac_address.length() != 12) return false;
+void CommandWriter::set_dual_connect_preferred(const std::string& mac_address) {
+    if (mac_address.length() != 12) return;
     std::vector<uint8_t> mac_bytes;
     for(size_t i = 0; i < mac_address.length(); i += 2) {
         mac_bytes.push_back(static_cast<uint8_t>(std::stoul(mac_address.substr(i, 2), nullptr, 16)));
@@ -278,11 +274,10 @@ bool CommandWriter::set_dual_connect_preferred(const std::string& mac_address) {
             HuaweiCommands::CMD_DUAL_CONNECT_PREFERRED_WRITE, 1, mac_bytes
     );
     send_and_log(request, "Set Preferred Device");
-    return true;
 }
 
-bool CommandWriter::dual_connect_action(const std::string& mac_address, uint8_t action_code) {
-    if (mac_address.length() != 12) return false;
+void CommandWriter::dual_connect_action(const std::string& mac_address, uint8_t action_code) {
+    if (mac_address.length() != 12) return;
     std::vector<uint8_t> mac_bytes;
     for(size_t i = 0; i < mac_address.length(); i += 2) {
         mac_bytes.push_back(static_cast<uint8_t>(std::stoul(mac_address.substr(i, 2), nullptr, 16)));
@@ -291,5 +286,4 @@ bool CommandWriter::dual_connect_action(const std::string& mac_address, uint8_t 
             HuaweiCommands::CMD_DUAL_CONNECT_EXECUTE, action_code, mac_bytes
     );
     send_and_log(request, "Dual-Connect Action");
-    return true;
 }

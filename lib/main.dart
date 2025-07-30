@@ -4,13 +4,17 @@ import 'package:dynamic_color/dynamic_color.dart';
 import 'package:flutter/material.dart' hide BoxDecoration, BoxShadow;
 import 'package:flutter_inset_shadow/flutter_inset_shadow.dart';
 import 'dart:ui';
-import 'services/freebuds_service.dart'; // Import the service
+import 'package:provider/provider.dart';
+import 'package:window_manager/window_manager.dart';
+import 'services/freebuds_service.dart';
 import 'gesture_settings_page.dart';
 import 'equalizer_page.dart';
 import 'dual_connect_page.dart';
 import 'package:flutter_acrylic/flutter_acrylic.dart' as flutter_acrylic;
+import 'services/theme_service.dart';
+import 'settings_page.dart';
+import 'platform_services.dart' as ps;
 import 'package:bitsdojo_window/bitsdojo_window.dart';
-
 
 
 // Add a class for constants to avoid magic numbers in the code.
@@ -24,6 +28,22 @@ class AncLevelConstants {
   // static const int level5_unused = 5;
   static const int normalAwareness = 6;
 }
+
+// NEW ANC UI DATA
+class AncLevelInfo {
+  const AncLevelInfo(this.title, this.subtitle, {this.icon, this.strength});
+  final String title;
+  final String subtitle;
+  final IconData? icon;
+  final double? strength;
+}
+
+const Map<int, AncLevelInfo> _ancLevelsData = {
+  0: AncLevelInfo('Comfortable', 'Light filtering for comfort', strength: 0.33),
+  1: AncLevelInfo('Normal', 'Balanced noise reduction', strength: 0.66),
+  2: AncLevelInfo('Ultra', 'Maximum isolation', strength: 1.0),
+  3: AncLevelInfo('Dynamic', 'AI-powered adaptive filtering', icon: Icons.flash_on_rounded),
+};
 
 class GestureSettingsConstants {
   static const Map<int, String> actions = {
@@ -59,73 +79,59 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   if (Platform.isWindows) {
-    doWhenWindowReady(() async {
-
-      const initialSize = Size(900, 600);
-      appWindow.minSize = Size(500, 400);
-      appWindow.size = initialSize;
-      appWindow.alignment = Alignment.center;
-      appWindow.title = "FreeBuds Controller";
-
-      await flutter_acrylic.Window.initialize();
-      await flutter_acrylic.Window.setEffect(
-        effect: flutter_acrylic.WindowEffect.mica,
-      );
-
-      flutter_acrylic.Window.hideWindowControls();
-      // this f thing made my life so f bad
-      // i debugged ts why the controls are duplicated, not knowing it comes with its own.
-      // worst part it doesnt even work. ( maybe thats my issue ).
-      // but i didnt f expect it, since i thought its only for f mica.
-
-      appWindow.show();
-
-    });
-
-
+    await ps.PlatformServices.initialize();
+    appWindow.show();
   }
 
-  runApp(const MyApp());
+  runApp(
+    ChangeNotifierProvider(
+      create: (_) => ThemeService(),
+      child: const MyApp(),
+    ),
+  );
 }
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
-  static final _defaultLightColorScheme = ColorScheme.fromSeed(
-    seedColor: Colors.green,
-    brightness: Brightness.light,
-    background: Colors.white,
-  );
-
-  static final _defaultDarkColorScheme = ColorScheme.fromSeed(
-    seedColor: Colors.green,
-    brightness: Brightness.dark,
-    background: Colors.black,
-  );
-
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'FreeBuds Controller',
-      theme: ThemeData(
-        colorScheme: _defaultLightColorScheme,
-        scaffoldBackgroundColor:
-        Platform.isWindows ? Colors.transparent : null,
-        useMaterial3: true,
-      ),
-      darkTheme: ThemeData(
-        colorScheme: _defaultDarkColorScheme,
-        scaffoldBackgroundColor:
-        Platform.isWindows ? Colors.transparent : null,
-        useMaterial3: true,
-      ),
-      // themeMode: ThemeMode.light,
-      home: WindowBorder(
-        color: Colors.transparent,
-        width: 0,
-        child: const FreeBudsController(),
-      ),
+    return Consumer<ThemeService>(
+      builder: (context, themeService, child) {
+        final lightColorScheme = ColorScheme.fromSeed(
+          seedColor: themeService.accentColor,
+          brightness: Brightness.light,
+        );
+        final darkColorScheme = ColorScheme.fromSeed(
+          seedColor: themeService.accentColor,
+          brightness: Brightness.dark,
+        );
+
+        return MaterialApp(
+          debugShowCheckedModeBanner: false,
+          title: 'FreeBuds Controller',
+          theme: ThemeData(
+            colorScheme: lightColorScheme,
+            scaffoldBackgroundColor:
+                Platform.isWindows ? const Color.fromARGB(0, 0, 0, 0) : null,
+            useMaterial3: true,
+          ),
+          darkTheme: ThemeData(
+            colorScheme: darkColorScheme,
+            scaffoldBackgroundColor:
+                Platform.isWindows ? Colors.transparent : null,
+            useMaterial3: true,
+          ),
+          themeMode: themeService.themeMode,
+          home: Platform.isWindows
+              ? WindowBorder(
+                  color: Colors.transparent,
+                  width: 0,
+                  child: const FreeBudsController(),
+                )
+              : const FreeBudsController(),
+        );
+      },
     );
   }
 }
@@ -137,7 +143,8 @@ class FreeBudsController extends StatefulWidget {
   _FreeBudsControllerState createState() => _FreeBudsControllerState();
 }
 
-class _FreeBudsControllerState extends State<FreeBudsController> {
+class _FreeBudsControllerState extends State<FreeBudsController>
+    with TickerProviderStateMixin, WidgetsBindingObserver, WindowListener {
   // State variables
   bool _isLoading = false;
   bool _isConnected = false;
@@ -149,10 +156,54 @@ class _FreeBudsControllerState extends State<FreeBudsController> {
   Map<String, dynamic>? _ancStatus;
   Timer? _ancUpdateTimer;
 
+  // Animation variables
+  late AnimationController _connectionAnimationController;
+  late Animation<double> _batteryCardAnimation;
+  late Animation<double> _ancCardAnimation;
+  late Animation<double> _settingsCardAnimation;
+  late Animation<double> _fabAnimation;
+
   @override
   void initState() {
     super.initState();
+    // Animation setup
+    _connectionAnimationController = AnimationController(
+      duration: const Duration(milliseconds: 800),
+      vsync: this,
+    );
+
+    // Staggered animations for cards
+    _batteryCardAnimation = CurvedAnimation(
+        parent: _connectionAnimationController,
+        curve: const Interval(0.0, 0.7, curve: Curves.easeOut));
+    _ancCardAnimation = CurvedAnimation(
+        parent: _connectionAnimationController,
+        curve: const Interval(0.2, 0.9, curve: Curves.easeOut));
+    _settingsCardAnimation = CurvedAnimation(
+        parent: _connectionAnimationController,
+        curve: const Interval(0.4, 1.0, curve: Curves.easeOut));
+    _fabAnimation = CurvedAnimation(
+        parent: _connectionAnimationController,
+        curve: const Interval(0.5, 1.0, curve: Curves.easeOut));
+
     _checkConnection();
+
+    if (Platform.isWindows) {
+      WidgetsBinding.instance.addObserver(this);
+      windowManager.addListener(this);
+      windowManager.setPreventClose(true);
+    }
+  }
+
+  @override
+  void dispose() {
+    if (Platform.isWindows) {
+      WidgetsBinding.instance.removeObserver(this);
+      windowManager.removeListener(this);
+    }
+    _ancUpdateTimer?.cancel();
+    _connectionAnimationController.dispose();
+    super.dispose();
   }
 
   // Debounced ANC update method
@@ -161,12 +212,6 @@ class _FreeBudsControllerState extends State<FreeBudsController> {
     _ancUpdateTimer = Timer(const Duration(milliseconds: 300), () {
       _updateAncStatusOnly();
     });
-  }
-
-  @override
-  void dispose() {
-    _ancUpdateTimer?.cancel();
-    super.dispose();
   }
 
 
@@ -224,6 +269,8 @@ class _FreeBudsControllerState extends State<FreeBudsController> {
     if (_isConnected) {
       await Future.delayed(const Duration(milliseconds: 750));
       await _updateAllDeviceStatus();
+      _connectionAnimationController.reset();
+      _connectionAnimationController.forward();
     } else {
       setState(() => _isLoading = false);
     }
@@ -240,16 +287,20 @@ class _FreeBudsControllerState extends State<FreeBudsController> {
           _isConnected = true;
           _isLoading = false; // Stop the loading indicator
           _deviceInfo = null;
+          // Clear previous data to avoid showing stale info
+          _batteryInfo = null;
+          _ancStatus = null;
         });
 
-        // // Now, let's wait a moment and then fetch the status separately.
-        // // This decouples the connection logic from the data fetching logic.
-        // await Future.delayed(const Duration(seconds: 2));
-        //
-        // print("▶️ Two seconds have passed. Now attempting to update status...");
-        await _updateAllDeviceStatus();
-        // print("◀️ Status update finished.");
+        // Start the animation immediately
+        _connectionAnimationController.reset();
+        _connectionAnimationController.forward();
 
+        // Show connection notification
+        ps.PlatformServices.showConnectionNotification(true, "HUAWEI FreeBuds 6i");
+
+        // Fetch status in the background without blocking the UI
+        _updateAllDeviceStatus();
       } else {
         print("❌ CONNECTION FAILED. The native part returned false.");
         setState(() {
@@ -279,6 +330,12 @@ class _FreeBudsControllerState extends State<FreeBudsController> {
       _ancStatus = null;
       _isLoading = false;
     });
+
+    // Reset animation
+    _connectionAnimationController.reset();
+
+    // Show disconnection notification
+    ps.PlatformServices.showConnectionNotification(false, "HUAWEI FreeBuds 6i");
   }
 
   // --- Feature Setters ---
@@ -354,122 +411,329 @@ class _FreeBudsControllerState extends State<FreeBudsController> {
 
   @override
   Widget build(BuildContext context) {
-    return WindowBorder(
-        color: Colors.transparent,
-        width: 0,
-        child: Scaffold(
-          // Transparent only on Windows (for acrylic/mica)
-          backgroundColor: Platform.isWindows
-              ? Colors.transparent
-              : Theme.of(context).colorScheme.surface,
-
-          appBar: AppBar(
-            elevation: 0,
-            backgroundColor: Colors.black12,
-            title: Platform.isWindows
-                ? WindowTitleBarBox(
-              child: Row(
-                children: [
-                  Expanded(
-                    child: MoveWindow(
-                      child: const Text(
-                        "FreeBuds Controller",
-                        style: TextStyle(color: Colors.white),
+    final isWide = MediaQuery.of(context).size.width > 700;
+    return Scaffold(
+      backgroundColor:
+          Platform.isWindows ? Colors.transparent : Theme.of(context).colorScheme.surface,
+      appBar: AppBar(
+        elevation: 0,
+        backgroundColor: Colors.black12,
+        title: Platform.isWindows
+            ? WindowTitleBarBox(
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: MoveWindow(
+                        child: const Text(
+                          "FreeBuds Controller",
+                          style: TextStyle(color: Colors.white),
+                        ),
                       ),
                     ),
-                  ),
-                  const WindowButtons(),
-                ],
-              ),
-            )
-                : const Text("FreeBuds Controller"),
-          ),
-
-          body: Stack( // Use a Stack to layer the background and the content
-            children: [
-              // SafeArea ensures your UI avoids the system status bar and notches.
-              SafeArea(
-                child: ListView(
-                  padding: const EdgeInsets.symmetric(horizontal: 16.0), // Main padding for the list
-                  children: [
-                    // This SizedBox provides the top padding that was missing.
-                    const SizedBox(height: 60),
-
-                    // Your existing cards will now sit perfectly inside this padded list.
-                    _buildConnectionCard(),
-                    const SizedBox(height: 16), // Spacing between cards
-                    if (_isConnected) ...[
-                      _buildBatteryCard(),
-                      const SizedBox(height: 16),
-                      _buildAncCard(),
-                      const SizedBox(height: 16),
-                      _buildSettingsCard(),
-                      const SizedBox(height: 16),
-                    ],
+                    const WindowButtons(),
                   ],
                 ),
-              ),
-            ],
+              )
+            : const Text("FreeBuds Controller"),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.settings_outlined),
+            onPressed: () {
+              Navigator.of(context).push(MaterialPageRoute(
+                  builder: (context) => const SettingsPage()));
+            },
+            tooltip: 'Settings',
           ),
-      )
-    );
-  }
-
-
-  Widget _buildConnectionCard() => GlassmorphicCard(
-    child: Padding(
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('Connection', style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Icon(_isConnected ? Icons.bluetooth_connected : Icons.bluetooth_disabled, color: _isConnected ? Colors.green : Colors.red),
-              const SizedBox(width: 8),
-              Expanded(
-                  child: Builder( // Using a Builder to cleanly handle the logic
-                      builder: (context) {
-                        if (!_isConnected || _deviceInfo == null) {
-                          return const Text("Not connected");
-                        }
-                        if (_deviceInfo!['error'] != null) {
-                          return Text("Error: ${_deviceInfo!['error']}");
-                        }
-
-                        final model = _deviceInfo!['model'] ?? 'Unknown Model';
-                        final firmware = _deviceInfo!['firmware_version'] ?? 'N/A';
-                        final serial = _deviceInfo!['serial_number'] ?? 'N/A';
-
-                        return Text(
-                          '$model\nFirmware: $firmware  |  Serial: $serial',
-                          style: Theme.of(context).textTheme.bodyMedium,
-                        );
-                      }
-                  )
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              ElevatedButton(onPressed: _isConnected ? null : _connect, child: const Text('Connect')),
-              const SizedBox(width: 8),
-              ElevatedButton(onPressed: _isConnected ? _disconnect : null, child: const Text('Disconnect')),
-            ],
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _updateAllDeviceStatus,
+            tooltip: 'Refresh',
           ),
         ],
       ),
-    ),
-  );
+      body: SafeArea(
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(
+              24.0, 24.0, 24.0, _isConnected ? 30.0 : 0.0),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              if (constraints.maxWidth > 700) {
+                return _buildWideLayout();
+              } else {
+                return _buildNarrowLayout();
+              }
+            },
+          ),
+        ),
+      ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
+      floatingActionButton: _isConnected
+          ? FadeTransition(
+              opacity: _fabAnimation,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24.0),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    ElevatedButton.icon(
+                      icon: const Icon(Icons.equalizer),
+                      label: const Text('Equalizer'),
+                      onPressed: () {
+                        Navigator.of(context).push(MaterialPageRoute(
+                            builder: (context) => const EqualizerPage()));
+                      },
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 20, vertical: 12),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                      ),
+                    ),
+                    ElevatedButton.icon(
+                      icon: const Icon(Icons.gesture),
+                      label: const Text('Gestures'),
+                      onPressed: () {
+                        Navigator.of(context).push(MaterialPageRoute(
+                            builder: (context) =>
+                                const GestureSettingsPage()));
+                      },
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 20, vertical: 12),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                      ),
+                    ),
+                    ElevatedButton.icon(
+                      icon: const Icon(Icons.devices_other),
+                      label: const Text('Dual Connect'),
+                      onPressed: () {
+                        Navigator.of(context).push(MaterialPageRoute(
+                            builder: (context) => const DualConnectPage()));
+                      },
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 20, vertical: 12),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          : null, // No floating action button when not connected
+    );
+  }
+
+  Widget _buildWideLayout() {
+    const spacing = 24.0;
+    // If not connected, only show the connection card.
+    if (!_isConnected) {
+      return Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          SizedBox(
+            width: 450, // Constrain width for a better look
+            height: 200, // Constrain height to prevent vertical stretching
+            child: _buildConnectionCard(),
+          ),
+        ],
+      );
+    }
+    // If connected, show the full bento layout.
+    return SingleChildScrollView(
+      child: Column(
+        children: [
+          IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  flex: 1,
+                  child: _buildConnectionCard(),
+                ),
+                SizedBox(width: spacing),
+                Expanded(
+                  flex: 2,
+                  child:
+                      _buildAnimatedCard(_batteryCardAnimation, _buildBatteryCard()),
+                ),
+              ],
+            ),
+          ),
+          SizedBox(height: spacing),
+          IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  child: _buildAnimatedCard(_ancCardAnimation, _buildAncCard()),
+                ),
+                SizedBox(width: spacing),
+                Expanded(
+                  child: _buildAnimatedCard(
+                      _settingsCardAnimation, _buildSettingsCard()),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNarrowLayout() {
+    const spacing = 24.0;
+    return ListView(
+      children: [
+        _buildConnectionCard(),
+        const SizedBox(height: spacing),
+        if (_isConnected) ...[
+          _buildAnimatedCard(_batteryCardAnimation, _buildBatteryCard()),
+          const SizedBox(height: spacing),
+          _buildAnimatedCard(_ancCardAnimation, _buildAncCard()),
+          const SizedBox(height: spacing),
+          _buildAnimatedCard(_settingsCardAnimation, _buildSettingsCard()),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildAnimatedCard(Animation<double> animation, Widget child) {
+    return FadeTransition(
+      opacity: animation,
+      child: SlideTransition(
+        position: Tween<Offset>(
+          begin: const Offset(0, 0.1),
+          end: Offset.zero,
+        ).animate(animation),
+        child: child,
+      ),
+    );
+  }
+
+  Widget _buildConnectionCard() {
+    Widget content;
+    Key? key;
+
+    // Determine content and key based on state for AnimatedSwitcher
+    if (_isLoading && !_isConnected) {
+      key = const ValueKey('loading-connect');
+      content = const Center(
+          child: Padding(
+              padding: EdgeInsets.symmetric(vertical: 24.0),
+              child: CircularProgressIndicator()));
+    } else if (!_isConnected) {
+      key = const ValueKey('disconnected');
+      content = Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch, // To center the button
+        children: [
+          const SizedBox(height: 12),
+          const Center(child: Text("You are not connected to a device.")),
+          const SizedBox(height: 16),
+          ElevatedButton(
+            onPressed: _connect,
+            child: const Text('Connect'),
+          ),
+        ],
+      );
+    } else if (_deviceInfo == null) {
+      key = const ValueKey('loading-info');
+      content = const Center(
+          child: Padding(
+              padding: EdgeInsets.symmetric(vertical: 24.0),
+              child: CircularProgressIndicator()));
+    } else if (_deviceInfo!['error'] != null) {
+      key = const ValueKey('error');
+      content = Center(
+          child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 24.0),
+              child: Text("Error: ${_deviceInfo!['error']}",
+                  style:
+                  TextStyle(color: Theme.of(context).colorScheme.error))));
+    } else {
+      // This is the main connected state.
+      key = const ValueKey('connected');
+      final model = _deviceInfo!['model'] ?? 'Unknown Model';
+      final firmware = _deviceInfo!['firmware_version'] ?? 'N/A';
+      final serial = _deviceInfo!['serial_number'] ?? 'N/A';
+      content = Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(model,
+                    style: const TextStyle(
+                        fontSize: 18, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 12),
+                Text('Firmware: $firmware',
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(color: Colors.white70)),
+                const SizedBox(height: 4),
+                Text('Serial: $serial',
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(color: Colors.white70)),
+              ],
+            ),
+          ),
+          const SizedBox(width: 16),
+          ElevatedButton(
+            onPressed: _disconnect,
+            style: ElevatedButton.styleFrom(
+              backgroundColor:
+              Theme.of(context).colorScheme.error.withOpacity(0.6),
+              foregroundColor: Theme.of(context).colorScheme.onError,
+              shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            child: const Text('Disconnect'),
+          ),
+        ],
+      );
+    }
+
+    return GlassmorphicCard(
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.bluetooth_connected_rounded,
+                    size: 28,
+                    color: Theme.of(context)
+                        .textTheme
+                        .titleLarge
+                        ?.color
+                        ?.withOpacity(0.8)),
+                const SizedBox(width: 12),
+                Text('Connection', style: Theme.of(context).textTheme.titleLarge),
+              ],
+            ),
+            const Divider(height: 24),
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 300),
+              child: Container(key: key, child: content),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   // --- WIDGET BUILDER METHODS ---
 
   Widget _buildAncCard() {
-    const cancellationLevels = { 0: 'Comfortable', 1: 'Normal', 2: 'Ultra', 3: 'Dynamic' };
-
     final currentMode = _ancStatus?['mode'] ?? 0;
     final currentLevel = _ancStatus?['level'] ?? 0;
 
@@ -479,13 +743,19 @@ class _FreeBudsControllerState extends State<FreeBudsController> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Noise Cancellation', style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 12),
+            Row(
+              children: [
+                Icon(Icons.volume_up_rounded, size: 28, color: Theme.of(context).textTheme.titleLarge?.color?.withOpacity(0.8)),
+                const SizedBox(width: 12),
+                Text('Noise Control', style: Theme.of(context).textTheme.titleLarge),
+              ],
+            ),
+            const Divider(height: 24),
             SegmentedButton<int>(
               segments: const [
-                ButtonSegment(value: 0, label: Text('Off')),
-                ButtonSegment(value: 1, label: Text('On')),
-                ButtonSegment(value: 2, label: Text('Aware')),
+                ButtonSegment(value: 0, label: Text('Off'), icon: Icon(Icons.volume_off_rounded, size: 18)),
+                ButtonSegment(value: 1, label: Text('On'), icon: Icon(Icons.volume_up_rounded, size: 18)),
+                ButtonSegment(value: 2, label: Text('Aware'), icon: Icon(Icons.hearing_rounded, size: 18)),
               ],
               selected: {currentMode},
               onSelectionChanged: (newSelection) {
@@ -493,37 +763,78 @@ class _FreeBudsControllerState extends State<FreeBudsController> {
                   _setAncMode(newSelection.first);
                 }
               },
+              style: SegmentedButton.styleFrom(
+                backgroundColor: Colors.black.withOpacity(0.2),
+                foregroundColor: Colors.white.withOpacity(0.8),
+                selectedBackgroundColor: Theme.of(context).colorScheme.primary,
+                selectedForegroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
             ),
             if (currentMode == 1) ...[
-              const Divider(height: 24),
-              Text('Cancellation Level', style: Theme.of(context).textTheme.titleMedium),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8.0,
-                runSpacing: 4.0,
-                children: cancellationLevels.entries.map((entry) {
-                  return ChoiceChip(
-                    label: Text(entry.value),
-                    selected: currentLevel == entry.key,
-                    onSelected: (selected) {
-                      if (selected && currentLevel != entry.key) {
-                        _setAncLevel(entry.key);
-                      }
-                    },
-                  );
-                }).toList(),
-              )
+              const Divider(height: 32),
+              Row(
+                children: [
+                  const Icon(Icons.bar_chart_rounded, size: 20),
+                  const SizedBox(width: 8),
+                  Text('Intensity Level', style: Theme.of(context).textTheme.titleMedium),
+                ],
+              ),
+              const SizedBox(height: 12),
+              ..._ancLevelsData.entries.map((entry) {
+                final int key = entry.key;
+                final AncLevelInfo data = entry.value;
+                final bool isSelected = currentLevel == key;
+
+                return InkWell(
+                  onTap: () => isSelected ? null : _setAncLevel(key),
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    margin: const EdgeInsets.symmetric(vertical: 4),
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: isSelected ? Theme.of(context).colorScheme.primary.withOpacity(0.25) : Colors.black.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: isSelected ? Theme.of(context).colorScheme.primary : Colors.transparent,
+                        width: 1.5,
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Text(data.title, style: const TextStyle(fontWeight: FontWeight.bold)),
+                                  if (data.icon != null) ...[
+                                    const SizedBox(width: 6),
+                                    Icon(data.icon, size: 16, color: Colors.orangeAccent),
+                                  ],
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              Text(data.subtitle, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.white70)),
+                            ],
+                          ),
+                        ),
+                        if (data.strength != null) _buildAncStrengthIndicator(data.strength!),
+                      ],
+                    ),
+                  ),
+                );
+              }),
             ],
             if (currentMode == 2) ...[
               const Divider(height: 24),
               SwitchListTile(
                 title: const Text('Voice Boost'),
                 subtitle: const Text('Enhanced voice clarity'),
-                value: currentLevel == 1, // The getter logic returns 1 for voice boost, 0 for normal.
-                onChanged: (value) {
-                  // Use the new constants for clarity.
-                  _setAncLevel(value ? AncLevelConstants.voiceBoost : AncLevelConstants.normalAwareness);
-                },
+                value: currentLevel == 1,
+                onChanged: (value) => _setAncLevel(value ? AncLevelConstants.voiceBoost : AncLevelConstants.normalAwareness),
+                activeColor: Theme.of(context).colorScheme.primary,
               ),
             ],
           ],
@@ -532,42 +843,61 @@ class _FreeBudsControllerState extends State<FreeBudsController> {
     );
   }
 
-  Widget _buildBatteryCard() => GlassmorphicCard( // <-- Use the new widget here
-    child: Padding(
-      padding: const EdgeInsets.all(20.0), // Increased padding for a better look
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Add a subtle icon next to the title
-          Row(
-            children: [
-              Icon(
-                Icons.battery_charging_full_rounded,
-                color: Colors.white.withOpacity(0.7),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                'Battery',
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white, // Ensure text is visible on the glass
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 20), // Increased spacing
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              _buildBatteryIndicator('Left', _batteryInfo?['left']),
-              _buildBatteryIndicator('Right', _batteryInfo?['right']),
-              _buildBatteryIndicator('Case', _batteryInfo?['case']),
-            ],
-          ),
-        ],
+  Widget _buildAncStrengthIndicator(double strength) {
+    return SizedBox(
+      width: 50,
+      height: 8,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(4),
+        child: LinearProgressIndicator(
+          value: strength,
+          backgroundColor: Colors.white.withOpacity(0.2),
+          valueColor: AlwaysStoppedAnimation<Color>(Theme.of(context).colorScheme.primary),
+        ),
       ),
-    ),
-  );
+    );
+  }
+
+  Widget _buildBatteryCard() => GlassmorphicCard(
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    Icons.battery_std_rounded,
+                    size: 28,
+                    color: Theme.of(context)
+                        .textTheme
+                        .titleLarge
+                        ?.color
+                        ?.withOpacity(0.8),
+                  ),
+                  const SizedBox(width: 12),
+                  Text('Battery Status',
+                      style: Theme.of(context).textTheme.titleLarge),
+                ],
+              ),
+              const Divider(height: 24),
+              Row(
+                children: [
+                  Expanded(
+                      child:
+                          _buildBatteryInfoBox('Left', _batteryInfo?['left'])),
+                  const SizedBox(width: 12),
+                  Expanded(
+                      child:
+                          _buildBatteryInfoBox('Right', _batteryInfo?['right'])),
+                ],
+              ),
+              const SizedBox(height: 12),
+              _buildBatteryInfoBox('Charging Case', _batteryInfo?['case']),
+            ],
+          ),
+        ),
+      );
 
   Widget _buildSettingsCard() => GlassmorphicCard(
     child: Padding(
@@ -575,8 +905,14 @@ class _FreeBudsControllerState extends State<FreeBudsController> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Device Settings', style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 8),
+          Row(
+            children: [
+              Icon(Icons.tune_rounded, size: 28, color: Theme.of(context).textTheme.titleLarge?.color?.withOpacity(0.8)),
+              const SizedBox(width: 12),
+              Text('Device Settings', style: Theme.of(context).textTheme.titleLarge),
+            ],
+          ),
+          const Divider(height: 24),
           SwitchListTile(
             title: const Text('Wear Detection'),
             subtitle: const Text('Auto-pause music when removed'),
@@ -600,61 +936,49 @@ class _FreeBudsControllerState extends State<FreeBudsController> {
           RadioListTile<int>(
             title: const Text('Prioritize Sound Quality'), value: 1, groupValue: _soundQualityPreference, onChanged: _onSoundQualityChanged,
           ),
-          const Divider(),
-          ListTile(
-            title: const Text('Gesture Controls'),
-            subtitle: const Text('Customize tap and swipe actions'),
-            trailing: const Icon(Icons.arrow_forward_ios),
-            onTap: () {
-              Navigator.of(context).push(MaterialPageRoute(builder: (context) => const GestureSettingsPage()));
-            },
-          ),
-          ListTile(
-            title: const Text('Equalizer'),
-            subtitle: const Text('Adjust sound presets'),
-            trailing: const Icon(Icons.arrow_forward_ios),
-            onTap: () {
-              Navigator.of(context).push(MaterialPageRoute(builder: (context) => const EqualizerPage()));
-            },
-          ),
-          const Divider(),
-          ListTile(
-            title: const Text('Connected Devices'),
-            subtitle: const Text('Manage dual-device connection'),
-            trailing: const Icon(Icons.devices_other),
-            onTap: () {
-              Navigator.of(context).push(MaterialPageRoute(builder: (context) => const DualConnectPage()));
-            },
-          ),
         ],
       ),
     ),
   );
 
+  Widget _buildBatteryInfoBox(String label, int? level) {
+    final color = level == null
+        ? Colors.grey
+        : level > 50
+            ? Theme.of(context).colorScheme.primary
+            : level > 20
+                ? Colors.amber
+                : Theme.of(context).colorScheme.error;
 
-  Widget _buildBatteryIndicator(String label, int? level) {
-    if (level == null) {
-      return Column(children: [Text(label), const SizedBox(height: 4), const Text('--%')]);
-    }
-    return Column(
-      children: [
-        Text(label),
-        const SizedBox(height: 8),
-        SizedBox(
-          width: 40,
-          height: 40,
-          child: CircularProgressIndicator(
-            value: level / 100.0,
-            strokeWidth: 5,
-            backgroundColor: Colors.grey.withOpacity(0.3),
-            valueColor: AlwaysStoppedAnimation<Color>(
-              level > 50 ? Colors.green : level > 20 ? Colors.orange : Colors.red,
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.2),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(label, style: const TextStyle(fontWeight: FontWeight.bold)),
+              Text(level != null ? '$level%' : '--%',
+                  style: TextStyle(color: Colors.white.withOpacity(0.7))),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: level != null ? level / 100.0 : 0.0,
+              minHeight: 6,
+              backgroundColor: Colors.white.withOpacity(0.1),
+              valueColor: AlwaysStoppedAnimation<Color>(color),
             ),
           ),
-        ),
-        const SizedBox(height: 8),
-        Text('$level%'),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -760,7 +1084,10 @@ class WindowButtons extends StatelessWidget {
       children: [
         MinimizeWindowButton(colors: buttonColors),
         MaximizeWindowButton(colors: buttonColors),
-        CloseWindowButton(colors: buttonColors),
+        CloseWindowButton(
+          colors: buttonColors,
+          onPressed: () => windowManager.hide(),
+        ),
       ],
     );
   }

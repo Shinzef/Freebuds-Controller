@@ -1,8 +1,10 @@
 import 'dart:ffi';
 import 'dart:io' show Platform;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'dart:convert';
 import 'package:ffi/ffi.dart';
+import 'dart:isolate';
 import 'dart:convert';
 
 // FFI Bridge for Windows DLL
@@ -109,6 +111,42 @@ class FFIBridge {
       );
 }
 
+// Top-level function for the isolate
+Future<bool> _connectDeviceIsolate(String deviceName) async {
+  // This function runs in a separate isolate.
+  // We can't access platform channels or FFI directly from here
+  // in the same way, but for this specific case, we are assuming
+  // the platform-specific implementation is thread-safe or can be
+  // called from a different context.
+
+  // NOTE: Direct FFI from a non-main isolate can be tricky.
+  // A more robust solution might involve a true Isolate with ports if
+  // the DLL is not thread-safe. For now, we'll proceed with `compute`.
+  try {
+    if (Platform.isAndroid) {
+      // Platform channels are safe to call from any isolate.
+      final result =
+          await FreeBudsService._channel.invokeMethod('connectDevice', {
+        'deviceName': deviceName,
+      });
+      return result == true;
+    } else if (Platform.isWindows) {
+      // FFI calls *might* not be safe from other isolates depending on the DLL.
+      // We are assuming it's safe for this implementation.
+      FFIBridge.initialize(); // Ensure it's initialized in this isolate's context
+      final namePtr = deviceName.toNativeUtf8();
+      final result = FFIBridge.connect(namePtr);
+      calloc.free(namePtr);
+      return result;
+    }
+    return false;
+  } catch (e) {
+    // It's good practice to handle potential errors within the isolate
+    print('Connection error in isolate: $e');
+    return false;
+  }
+}
+
 class FreeBudsService {
   static const MethodChannel _channel = MethodChannel('freebuds/bluetooth');
   static bool _isWindowsInitialized = false;
@@ -123,24 +161,8 @@ class FreeBudsService {
   static Future<bool> connectDevice([
     String deviceName = "HUAWEI FreeBuds 6i",
   ]) async {
-    try {
-      if (Platform.isAndroid) {
-        final result = await _channel.invokeMethod('connectDevice', {
-          'deviceName': deviceName,
-        });
-        return result == true;
-      } else if (Platform.isWindows) {
-        _ensureWindowsInitialized();
-        final namePtr = deviceName.toNativeUtf8();
-        final result = FFIBridge.connect(namePtr);
-        calloc.free(namePtr);
-        return result;
-      }
-      return false;
-    } catch (e) {
-      print('Connection error: $e');
-      return false;
-    }
+    // Use Flutter's `compute` function to run the connection logic in a background isolate.
+    return await compute(_connectDeviceIsolate, deviceName);
   }
 
   static Future<bool> disconnectDevice() async {
@@ -177,6 +199,7 @@ class FreeBudsService {
         final resultPtr = FFIBridge.getDeviceInfo();
         if (resultPtr.address == 0) return null;
         final jsonString = resultPtr.toDartString();
+        print(resultPtr.toDartString());
         return jsonDecode(jsonString);
       }
       return null;
@@ -402,13 +425,24 @@ class FreeBudsService {
         _ensureWindowsInitialized();
         final resultPtr = FFIBridge.getGestureSettings();
         if (resultPtr.address == 0) return null;
-        final jsonString = resultPtr.toDartString();
-        //calloc.free(resultPtr);
-        return jsonDecode(jsonString);
+        return await compute(_getGestureSettingsWindows, null);
       }
       return null;
     } catch (e) {
       print('Get gesture settings error: $e');
+      return null;
+    }
+  }
+
+  static Map<String, dynamic>? _getGestureSettingsWindows(_) {
+    try {
+      final resultPtr = FFIBridge.getGestureSettings();
+      if (resultPtr.address == 0) return null;
+      final jsonString = resultPtr.toDartString();
+      //calloc.free(resultPtr);
+      return jsonDecode(jsonString);
+    } catch (e) {
+      print('Windows FFI error: $e');
       return null;
     }
   }

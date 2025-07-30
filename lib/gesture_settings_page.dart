@@ -1,8 +1,10 @@
+// lib/gesture_settings_page.dart
+
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'services/freebuds_service.dart';
 
-// These constants are used to map the integer codes from the device
-// to human-readable strings for the UI.
+// Constants class remains the same
 class GestureSettingsConstants {
   static const Map<int, String> tapActions = {
     1: 'Play/Pause',
@@ -31,76 +33,186 @@ class GestureSettingsPage extends StatefulWidget {
 }
 
 class _GestureSettingsPageState extends State<GestureSettingsPage> {
-  // This state variable will hold the Future that fetches our settings.
-  // We initialize it in initState() and the FutureBuilder will handle the rest.
   late Future<Map<String, dynamic>?> _settingsFuture;
+  bool _isLoading = false;
 
   @override
   void initState() {
     super.initState();
-    // Start loading the data when the page is first created.
+    // Wait for the page transition to complete before loading data
     _settingsFuture = _loadInitialSettings();
   }
 
-  /// THE CORE FIX: This method ensures the heavy Bluetooth call happens
-  /// *after* the page transition has started, preventing the UI from freezing.
+  /// Optimized loading that waits for the page transition to complete
   Future<Map<String, dynamic>?> _loadInitialSettings() async {
-    // This tiny delay gives Flutter enough time to start the page slide animation.
-    await Future.delayed(const Duration(milliseconds: 50));
-    // Now, we make the actual call to get the data.
-    return FreeBudsService.getGestureSettings();
+    // Wait for the current frame to complete and the page transition to start
+    await SchedulerBinding.instance.endOfFrame;
+
+    // Additional delay to ensure smooth transition, especially on Windows
+    await Future.delayed(const Duration(milliseconds: 450));
+
+    // Force the UI to rebuild with the loading state before making the Bluetooth call
+    if (mounted) {
+      setState(() {
+        _isLoading = true;
+      });
+    }
+
+    // Give the UI one more frame to render the loading state
+    await SchedulerBinding.instance.endOfFrame;
+
+    try {
+      // Now make the Bluetooth call
+      return await FreeBudsService.getGestureSettings();
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
   }
 
-  /// Call this method to fetch the latest settings from the device again.
-  /// It updates the `_settingsFuture` and tells the UI to rebuild.
+  /// Optimized refresh that prevents multiple simultaneous calls
   void _refreshSettings() {
+    if (!mounted || _isLoading) return;
+
     setState(() {
-      _settingsFuture = FreeBudsService.getGestureSettings();
+      _isLoading = true;
+      _settingsFuture = _performRefresh();
     });
+  }
+
+  /// Separate method for refresh to handle loading state
+  Future<Map<String, dynamic>?> _performRefresh() async {
+    // Give the UI a chance to render the loading state
+    await SchedulerBinding.instance.endOfFrame;
+
+    try {
+      final result = await FreeBudsService.getGestureSettings();
+      return result;
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  /// Optimized setting change handler with debouncing
+  Future<void> _handleSettingChange(Future<void> Function() serviceCall) async {
+    if (_isLoading) return; // Prevent multiple simultaneous calls
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    // Give the UI a chance to render the loading state
+    await SchedulerBinding.instance.endOfFrame;
+
+    try {
+      await serviceCall();
+      // Small delay to ensure the setting is applied
+      await Future.delayed(const Duration(milliseconds: 200));
+
+      // Refresh settings
+      if (mounted) {
+        final newSettings = await FreeBudsService.getGestureSettings();
+        setState(() {
+          _settingsFuture = Future.value(newSettings);
+        });
+      }
+    } catch (e) {
+      // Handle error appropriately
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to update setting: $e'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Gesture Controls')),
+      appBar: AppBar(
+        title: const Text('Gesture Controls'),
+        actions: [
+          if (_isLoading)
+            const Padding(
+              padding: EdgeInsets.all(16.0),
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+        ],
+      ),
       body: FutureBuilder<Map<String, dynamic>?>(
-        // The FutureBuilder widget listens to our _settingsFuture.
         future: _settingsFuture,
         builder: (context, snapshot) {
-          // --- STATE 1: LOADING ---
-          // While the future is running, we show a loading spinner.
-          // This is what the user sees during the smooth page transition.
+          // Show loading indicator while waiting
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-
-          // --- STATE 2: ERROR ---
-          // If the future completes with an error or no data, we show an error message.
-          if (snapshot.hasError || !snapshot.hasData || snapshot.data == null) {
-            return Center(
+            return const Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Text('Failed to load gesture settings.'),
-                  const SizedBox(height: 8),
-                  ElevatedButton(
-                    onPressed: _refreshSettings, // Allow user to retry
-                    child: const Text('Retry'),
-                  )
+                  CircularProgressIndicator(),
+                  SizedBox(height: 16),
+                  Text('Loading gesture settings...'),
                 ],
               ),
             );
           }
 
-          // --- STATE 3: SUCCESS ---
-          // If we get here, the data has loaded successfully.
-          final gestureSettings = snapshot.data!;
+          // Handle error state
+          if (snapshot.hasError || !snapshot.hasData || snapshot.data == null) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.error_outline,
+                    size: 48,
+                    color: Theme.of(context).colorScheme.error,
+                  ),
+                  const SizedBox(height: 16),
+                  const Text('Failed to load gesture settings.'),
+                  const SizedBox(height: 8),
+                  ElevatedButton(
+                    onPressed: _isLoading ? null : _refreshSettings,
+                    child: _isLoading
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text('Retry'),
+                  ),
+                ],
+              ),
+            );
+          }
 
-          // Now we build the actual UI with the data we received.
+          // Build the main UI
+          final gestureSettings = snapshot.data!;
           return RefreshIndicator(
             onRefresh: () async => _refreshSettings(),
             child: ListView(
               padding: const EdgeInsets.all(8.0),
+              physics:
+                  const AlwaysScrollableScrollPhysics(), // Ensures pull-to-refresh works
               children: [
                 _buildGestureGroup(
                   title: 'Double-Tap',
@@ -109,9 +221,8 @@ class _GestureSettingsPageState extends State<GestureSettingsPage> {
                   rightActionKey: 'double_tap_right',
                   actionsMap: GestureSettingsConstants.tapActions,
                   onChanged: (side, action) {
-                    // When a setting is changed, we call the service and then refresh.
-                    FreeBudsService.setDoubleTapAction(side, action)
-                        .then((_) => _refreshSettings());
+                    _handleSettingChange(
+                        () => FreeBudsService.setDoubleTapAction(side, action));
                   },
                 ),
                 _buildGestureGroup(
@@ -121,8 +232,8 @@ class _GestureSettingsPageState extends State<GestureSettingsPage> {
                   rightActionKey: 'triple_tap_right',
                   actionsMap: GestureSettingsConstants.tapActions,
                   onChanged: (side, action) {
-                    FreeBudsService.setTripleTapAction(side, action)
-                        .then((_) => _refreshSettings());
+                    _handleSettingChange(
+                        () => FreeBudsService.setTripleTapAction(side, action));
                   },
                 ),
                 _buildGestureGroup(
@@ -132,8 +243,8 @@ class _GestureSettingsPageState extends State<GestureSettingsPage> {
                   rightActionKey: 'long_tap_right',
                   actionsMap: GestureSettingsConstants.longPressActions,
                   onChanged: (side, action) {
-                    FreeBudsService.setLongTapAction(side, action)
-                        .then((_) => _refreshSettings());
+                    _handleSettingChange(
+                        () => FreeBudsService.setLongTapAction(side, action));
                   },
                 ),
                 _buildSingleGestureControl(
@@ -142,10 +253,12 @@ class _GestureSettingsPageState extends State<GestureSettingsPage> {
                   actionKey: 'swipe_action',
                   actionsMap: GestureSettingsConstants.swipeActions,
                   onChanged: (action) {
-                    FreeBudsService.setSwipeAction(action)
-                        .then((_) => _refreshSettings());
+                    _handleSettingChange(
+                        () => FreeBudsService.setSwipeAction(action));
                   },
-                )
+                ),
+                // Add some bottom padding for better UX
+                const SizedBox(height: 20),
               ],
             ),
           );
@@ -174,9 +287,17 @@ class _GestureSettingsPageState extends State<GestureSettingsPage> {
             Text(title, style: Theme.of(context).textTheme.titleLarge),
             const Divider(height: 20),
             _buildDropdown(
-                'Left Earbud', settings[leftActionKey], actionsMap, (action) => onChanged(0, action)),
+              'Left Earbud',
+              settings[leftActionKey] ?? -1,
+              actionsMap,
+              _isLoading ? null : (action) => onChanged(0, action),
+            ),
             _buildDropdown(
-                'Right Earbud', settings[rightActionKey], actionsMap, (action) => onChanged(1, action)),
+              'Right Earbud',
+              settings[rightActionKey] ?? -1,
+              actionsMap,
+              _isLoading ? null : (action) => onChanged(1, action),
+            ),
           ],
         ),
       ),
@@ -199,7 +320,12 @@ class _GestureSettingsPageState extends State<GestureSettingsPage> {
           children: [
             Text(title, style: Theme.of(context).textTheme.titleLarge),
             const Divider(height: 20),
-            _buildDropdown('Action', settings[actionKey], actionsMap, onChanged),
+            _buildDropdown(
+              'Action',
+              settings[actionKey] ?? -1,
+              actionsMap,
+              _isLoading ? null : onChanged,
+            ),
           ],
         ),
       ),
@@ -207,26 +333,31 @@ class _GestureSettingsPageState extends State<GestureSettingsPage> {
   }
 
   Widget _buildDropdown(
-      String label, int currentValue, Map<int, String> actionsMap, ValueChanged<int> onChanged) {
+    String label,
+    int currentValue,
+    Map<int, String> actionsMap,
+    ValueChanged<int>? onChanged,
+  ) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         Text(label, style: Theme.of(context).textTheme.titleMedium),
         DropdownButton<int>(
-          value: currentValue,
+          value: actionsMap.containsKey(currentValue) ? currentValue : null,
+          hint: const Text("Unknown"),
           items: actionsMap.entries.map((entry) {
             return DropdownMenuItem<int>(
               value: entry.key,
               child: Text(entry.value),
             );
           }).toList(),
-          onChanged: (newValue) {
-            if (newValue != null && newValue != currentValue) {
-              // We call the onChanged callback passed from the build method.
-              // This is what triggers the FreeBudsService call and the subsequent refresh.
-              onChanged(newValue);
-            }
-          },
+          onChanged: onChanged == null
+              ? null
+              : (int? newValue) {
+                  if (newValue != null) {
+                    onChanged(newValue);
+                  }
+                },
         ),
       ],
     );

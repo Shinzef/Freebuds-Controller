@@ -6,7 +6,9 @@ list(APPEND FLUTTER_PLUGIN_LIST
   bitsdojo_window_windows
   dynamic_color
   flutter_acrylic
-  screen_retriever_windows
+  local_notifier
+  screen_retriever
+  system_tray
   window_manager
 )
 
